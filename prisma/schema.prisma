@@ -1,0 +1,189 @@
+// Fonte da verdade do FORMATO (client tipado). O banco é criado/alterado por SQL
+// manual idempotente em db/scripts/ — nunca `prisma migrate`/`db push`. [design.md §4, §7]
+// Enums de domínio são texto + CHECK no banco (não enum nativo) → aqui são String,
+// validados por Zod (contratos) + CHECK (SQL).
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["driverAdapters"]
+  // "native" para dev local; "rhel-openssl-3.0.x" é o runtime das funções do Vercel.
+  binaryTargets   = ["native", "rhel-openssl-3.0.x"]
+}
+
+model Organization {
+  id        String    @id @default(cuid())
+  name      String
+  createdAt DateTime  @default(now())
+  users     User[]
+  roles     Role[]
+  projects  Project[]
+
+  @@map("organizations")
+}
+
+model User {
+  id                 String    @id @default(cuid())
+  orgId              String
+  name               String
+  email              String
+  passwordHash       String
+  roleId             String?
+  extraPermissions   String[]  @default([]) // grant-only (sem revoke) [DA5]
+  mustChangePassword Boolean   @default(false)
+  tokenVersion       Int       @default(0) // bump derruba todas as sessões [SEC-007]
+  deletedAt          DateTime?
+  createdAt          DateTime  @default(now())
+
+  organization  Organization    @relation(fields: [orgId], references: [id])
+  role          Role?           @relation(fields: [roleId], references: [id], onDelete: Restrict)
+  refreshTokens RefreshToken[]
+  assignedTasks Task[]          @relation("assignee")
+  projectAccess ProjectMember[]
+
+  @@index([orgId])
+  @@map("users")
+}
+
+model Role {
+  id          String   @id @default(cuid())
+  orgId       String
+  name        String
+  permissions String[] @default([]) // ⊆ catálogo (validado por Zod na escrita) [SEC-114]
+  isSystem    Boolean  @default(false)
+
+  organization Organization @relation(fields: [orgId], references: [id])
+  users        User[]
+
+  @@unique([orgId, name])
+  @@map("roles")
+}
+
+model RefreshToken {
+  id              String    @id @default(cuid())
+  userId          String
+  tokenHash       String    @unique // SHA-256 do token de alta entropia [SEC-004]
+  family          String
+  expiresAt       DateTime
+  familyExpiresAt DateTime
+  revokedAt       DateTime?
+  replacedById    String?   @unique // CAS: um filho por token [SEC-004]
+  createdAt       DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([family])
+  @@map("refresh_tokens")
+}
+
+model Project {
+  id              String    @id @default(cuid())
+  orgId           String
+  name            String
+  description     String?
+  createdById     String
+  deletionBatchId String?
+  deletedAt       DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  organization Organization    @relation(fields: [orgId], references: [id])
+  tasks        Task[]
+  members      ProjectMember[]
+
+  @@unique([id, orgId]) // habilita a FK composta de integridade de tenant [ARQ]
+  @@index([orgId])
+  @@map("projects")
+}
+
+model ProjectMember {
+  projectId String
+  userId    String
+  createdAt DateTime @default(now())
+
+  project Project @relation(fields: [projectId], references: [id])
+  user    User    @relation(fields: [userId], references: [id])
+
+  @@id([projectId, userId])
+  @@index([userId])
+  @@map("project_members")
+}
+
+model Task {
+  id              String    @id @default(cuid())
+  orgId           String
+  projectId       String
+  title           String
+  description     String?
+  status          String    @default("TODO") // TODO|DOING|DONE (CHECK)
+  priority        String    @default("MEDIUM") // LOW|MEDIUM|HIGH (CHECK)
+  dueDate         DateTime?
+  assigneeId      String?
+  position        Float     @default(0)
+  createdById     String
+  deletionBatchId String?
+  deletedAt       DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  // FK composta garante task.orgId == project.orgId [ARQ]
+  project  Project   @relation(fields: [projectId, orgId], references: [id, orgId])
+  assignee User?     @relation("assignee", fields: [assigneeId], references: [id])
+  subtasks Subtask[]
+
+  @@index([orgId])
+  @@index([projectId, status, position])
+  @@index([assigneeId])
+  @@index([dueDate])
+  @@map("tasks")
+}
+
+model Subtask {
+  id        String   @id @default(cuid())
+  taskId    String
+  title     String
+  done      Boolean  @default(false)
+  position  Float    @default(0)
+  createdAt DateTime @default(now())
+
+  task Task @relation(fields: [taskId], references: [id])
+
+  @@index([taskId])
+  @@map("subtasks")
+}
+
+model IdempotencyKey {
+  key       String   @id
+  userId    String
+  resultId  String
+  createdAt DateTime @default(now())
+
+  @@map("idempotency_keys")
+}
+
+model LoginAttempt {
+  email       String    @id
+  count       Int       @default(0)
+  firstAt     DateTime  @default(now())
+  lockedUntil DateTime?
+
+  @@map("login_attempts")
+}
+
+model PermissionAudit {
+  id           String   @id @default(cuid())
+  actorId      String
+  targetUserId String?
+  action       String
+  detail       Json     @default("{}")
+  createdAt    DateTime @default(now())
+
+  @@index([targetUserId])
+  @@map("permission_audit")
+}
