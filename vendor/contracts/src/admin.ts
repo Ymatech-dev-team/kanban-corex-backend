@@ -19,6 +19,22 @@ export const updateMemberSchema = z.object({
 });
 export type UpdateMemberInput = z.infer<typeof updateMemberSchema>;
 
+/** Remuneração do membro: salário mensal OU valor/hora (exclusivos). Valor em CENTAVOS. */
+export const COMPENSATION_TYPES = ["MONTHLY", "HOURLY"] as const;
+export const compensationTypeSchema = z.enum(COMPENSATION_TYPES);
+export type CompensationType = (typeof COMPENSATION_TYPES)[number];
+
+export const setCompensationSchema = z
+  .object({
+    type: compensationTypeSchema.nullable(),
+    amountCents: z.number().int().min(0).max(100_000_000).nullable(), // teto R$ 1.000.000,00
+  })
+  .refine((d) => (d.type === null) === (d.amountCents === null), {
+    message: "Informe o tipo e o valor, ou limpe os dois.",
+    path: ["amountCents"],
+  });
+export type SetCompensationInput = z.infer<typeof setCompensationSchema>;
+
 export const createRoleSchema = z.object({
   name: z.string().trim().min(1).max(80),
   permissions: permissionListSchema,

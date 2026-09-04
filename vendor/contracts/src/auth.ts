@@ -25,6 +25,25 @@ export const firstLoginSchema = z
   });
 export type FirstLoginInput = z.infer<typeof firstLoginSchema>;
 
+/** Trocar a senha estando logado (senha atual + nova). */
+export const changePasswordSchema = z
+  .object({
+    currentPassword: z.string().min(1, "Informe a senha atual"),
+    newPassword: z.string().min(8, "A nova senha deve ter ao menos 8 caracteres"),
+    confirmPassword: z.string(),
+  })
+  .refine((d) => d.newPassword === d.confirmPassword, {
+    message: "As senhas não conferem",
+    path: ["confirmPassword"],
+  });
+export type ChangePasswordInput = z.infer<typeof changePasswordSchema>;
+
+/** Editar o próprio perfil. */
+export const updateProfileSchema = z.object({
+  name: z.string().trim().min(1, "Informe o nome").max(120),
+});
+export type UpdateProfileInput = z.infer<typeof updateProfileSchema>;
+
 /** Papéis de tarefa (enum de domínio — texto + CHECK no banco). */
 export const TASK_STATUS = ["TODO", "DOING", "DONE"] as const;
 export const TASK_PRIORITY = ["LOW", "MEDIUM", "HIGH"] as const;

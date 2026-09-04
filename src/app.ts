@@ -32,6 +32,7 @@ import { MemberService } from "./modules/admin/member.service.js";
 import { RoleService } from "./modules/admin/role.service.js";
 import { PrismaMemberRepo, PrismaRoleRepo } from "./modules/admin/prisma-repos.js";
 import { makeAdminRoutes } from "./modules/admin/admin.routes.js";
+import { makeAccountRoutes } from "./modules/account/account.routes.js";
 
 export interface AppDeps {
   authService?: AuthService;
@@ -147,6 +148,9 @@ export function buildApp(deps: AppDeps = {}): FastifyInstance {
   }
   if (authenticate) {
     typed.register(makeMeRoutes(authenticate));
+  }
+  if (authenticate && authService && memberService) {
+    typed.register(makeAccountRoutes(authenticate, authService, memberService));
   }
   if (authenticate && authorizer && projectService) {
     typed.register(makeProjectRoutes(authenticate, authorizer, projectService));

@@ -4,6 +4,7 @@ import { z } from "zod";
 import {
   createMemberSchema,
   updateMemberSchema,
+  setCompensationSchema,
   createRoleSchema,
   updateRoleSchema,
   PERMISSIONS,
@@ -53,6 +54,15 @@ export function makeAdminRoutes(
       async (req) => {
         await authz.assertCan(req.session!, PERMISSIONS.membros_gerenciar);
         return members.resetPassword(req.session!, req.params.id);
+      },
+    );
+    r.patch(
+      "/members/:id/compensation",
+      { preHandler: authenticate, schema: { params: idParams, body: setCompensationSchema } },
+      async (req) => {
+        await authz.assertCan(req.session!, PERMISSIONS.membros_gerenciar);
+        await members.setCompensation(req.session!, req.params.id, req.body);
+        return { ok: true };
       },
     );
 

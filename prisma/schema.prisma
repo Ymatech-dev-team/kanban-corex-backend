@@ -37,6 +37,8 @@ model User {
   extraPermissions   String[]  @default([]) // grant-only (sem revoke) [DA5]
   mustChangePassword Boolean   @default(false)
   tokenVersion       Int       @default(0) // bump derruba todas as sessões [SEC-007]
+  compensationType   String? // "MONTHLY" | "HOURLY" (CHECK no banco); null = não definido
+  compensationCents  Int? // valor em centavos (salário mensal OU valor/hora)
   deletedAt          DateTime?
   createdAt          DateTime  @default(now())
 

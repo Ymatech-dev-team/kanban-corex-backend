@@ -21,7 +21,10 @@ export class PrismaMemberRepo implements MemberRepo {
   async listByOrg(orgId: string): Promise<MemberSummary[]> {
     const rows = await this.db.user.findMany({
       where: { orgId, deletedAt: null },
-      select: { id: true, name: true, email: true, roleId: true, extraPermissions: true, mustChangePassword: true },
+      select: {
+        id: true, name: true, email: true, roleId: true, extraPermissions: true, mustChangePassword: true,
+        compensationType: true, compensationCents: true,
+      },
       orderBy: { name: "asc" },
     });
     return rows;
@@ -57,7 +60,10 @@ export class PrismaMemberRepo implements MemberRepo {
           roleId: m.roleId,
           mustChangePassword: true,
         },
-        select: { id: true, name: true, email: true, roleId: true, extraPermissions: true, mustChangePassword: true },
+        select: {
+          id: true, name: true, email: true, roleId: true, extraPermissions: true, mustChangePassword: true,
+          compensationType: true, compensationCents: true,
+        },
       });
     } catch (e) {
       // Índice único parcial (orgId,email) WHERE deletedAt IS NULL garante no banco. [SEC-204]
@@ -84,6 +90,9 @@ export class PrismaMemberRepo implements MemberRepo {
       where: { id },
       data: { passwordHash, mustChangePassword: true, tokenVersion: { increment: 1 } },
     });
+  }
+  async setCompensation(id: string, type: string | null, cents: number | null): Promise<void> {
+    await this.db.user.update({ where: { id }, data: { compensationType: type, compensationCents: cents } });
   }
   async nullAllAssignees(userId: string): Promise<void> {
     await this.db.task.updateMany({ where: { assigneeId: userId }, data: { assigneeId: null } });

@@ -20,6 +20,8 @@ export class PrismaAuthzUserRepo implements AuthzUserRepo {
       mustChangePassword: u.mustChangePassword,
       rolePermissions: u.role?.permissions ?? [],
       extraPermissions: u.extraPermissions,
+      name: u.name,
+      email: u.email,
     };
   }
 }

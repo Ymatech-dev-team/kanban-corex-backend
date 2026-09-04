@@ -49,6 +49,8 @@ export function makeAuthenticate(deps: { tokens: TokenService; users: AuthzUserR
       orgId: user.orgId,
       permissions: resolveEffectivePermissions(user.rolePermissions, user.extraPermissions),
       mustChangePassword: user.mustChangePassword,
+      name: user.name,
+      email: user.email,
     };
   };
 }

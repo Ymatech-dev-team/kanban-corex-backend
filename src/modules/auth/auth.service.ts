@@ -62,6 +62,23 @@ export class AuthService {
     await this.d.refresh.revokeFamilyOf(presented);
   }
 
+  /** Trocar a senha estando logado. Bump de tokenVersion + revoga refresh → derruba a sessão atual. */
+  async changePassword(userId: string, currentPassword: string, newPassword: string): Promise<void> {
+    const user = await this.d.users.findById(userId);
+    if (!user || user.deletedAt) throw new AppError("NAO_AUTENTICADO", "Sessão inválida");
+    const ok = await this.d.passwords.verify(currentPassword, user.passwordHash);
+    if (!ok) throw new AppError("NAO_AUTENTICADO", "Senha atual inválida");
+    const hash = await this.d.passwords.hash(newPassword);
+    await this.d.users.setNewPassword(user.id, hash);
+    await this.d.refresh.revokeAllForUser(user.id);
+  }
+
+  async updateName(userId: string, name: string): Promise<void> {
+    const user = await this.d.users.findById(userId);
+    if (!user || user.deletedAt) throw new AppError("NAO_AUTENTICADO", "Sessão inválida");
+    await this.d.users.updateName(userId, name);
+  }
+
   async firstLogin(userId: string, currentPassword: string, newPassword: string): Promise<void> {
     const user = await this.d.users.findById(userId);
     if (!user || user.deletedAt || !user.mustChangePassword) {

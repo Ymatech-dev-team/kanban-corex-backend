@@ -12,6 +12,8 @@ export function makeMeRoutes(authenticate: Authenticate) {
       return {
         userId: s.userId,
         orgId: s.orgId,
+        name: s.name ?? "",
+        email: s.email ?? "",
         permissions: [...s.permissions],
         mustChangePassword: s.mustChangePassword,
       };

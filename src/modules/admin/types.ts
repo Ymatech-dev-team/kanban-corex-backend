@@ -9,6 +9,8 @@ export interface MemberRecord {
   mustChangePassword: boolean;
   tokenVersion: number;
   deletedAt: Date | null;
+  compensationType?: string | null;
+  compensationCents?: number | null;
 }
 
 export interface MemberSummary {
@@ -18,6 +20,8 @@ export interface MemberSummary {
   roleId: string | null;
   extraPermissions: string[];
   mustChangePassword: boolean;
+  compensationType: string | null;
+  compensationCents: number | null;
 }
 
 export interface NewMember {
@@ -39,6 +43,8 @@ export interface MemberRepo {
   ): Promise<void>;
   softDeleteAndBump(id: string): Promise<void>;
   setTempPasswordAndBump(id: string, passwordHash: string): Promise<void>;
+  /** Define (ou limpa) a remuneração do membro. Ambos null = limpar. */
+  setCompensation(id: string, type: string | null, cents: number | null): Promise<void>;
   nullAllAssignees(userId: string): Promise<void>;
   /** IDs dos usuários cuja permissão efetiva inclui conceder + gerenciar (admins). [SEC-016] */
   listGovernanceAdminIds(orgId: string): Promise<string[]>;

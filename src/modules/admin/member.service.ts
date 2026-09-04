@@ -30,8 +30,28 @@ export class MemberService {
     private readonly audit: AuditRepo,
   ) {}
 
-  list(session: SessionContext) {
-    return this.members.listByOrg(session.orgId);
+  async list(session: SessionContext) {
+    const members = await this.members.listByOrg(session.orgId);
+    // Salário é sensível: só quem gerencia membros vê a remuneração. [SEC]
+    if (session.permissions.has(PERMISSIONS.membros_gerenciar)) return members;
+    return members.map((m) => ({ ...m, compensationType: null, compensationCents: null }));
+  }
+
+  /** Define/limpa a remuneração (salário mensal OU valor/hora). Auditado sem o valor. */
+  async setCompensation(
+    session: SessionContext,
+    targetId: string,
+    input: { type: string | null; amountCents: number | null },
+  ): Promise<void> {
+    const target = await this.members.findById(targetId, session.orgId);
+    if (!target) throw new AppError("NAO_ENCONTRADO", "Usuário não encontrado");
+    await this.members.setCompensation(targetId, input.type, input.amountCents);
+    await this.audit.record({
+      actorId: session.userId,
+      targetUserId: targetId,
+      action: "member.compensation",
+      detail: { type: input.type }, // nunca loga o valor
+    });
   }
 
   async create(session: SessionContext, input: CreateMemberInput) {
@@ -124,6 +144,26 @@ export class MemberService {
     await this.refresh.revokeAllForUser(targetId);
     await this.members.nullAllAssignees(targetId); // [SEC-007/RF8]
     await this.audit.record({ actorId: session.userId, targetUserId: targetId, action: "member.delete", detail: {} });
+  }
+
+  /** Auto-exclusão da própria conta. Barra o ÚLTIMO admin (org ficaria sem ninguém). [SEC-016] */
+  async deleteOwnAccount(session: SessionContext): Promise<void> {
+    const admins = await this.members.listGovernanceAdminIds(session.orgId);
+    if (wouldLeaveNoAdmin(admins, session.userId)) {
+      throw new AppError(
+        "CONFLITO",
+        "Você é o único administrador. Transfira a administração para outra pessoa antes de excluir sua conta.",
+      );
+    }
+    await this.members.softDeleteAndBump(session.userId);
+    await this.refresh.revokeAllForUser(session.userId);
+    await this.members.nullAllAssignees(session.userId);
+    await this.audit.record({
+      actorId: session.userId,
+      targetUserId: session.userId,
+      action: "member.self_delete",
+      detail: {},
+    });
   }
 
   async resetPassword(session: SessionContext, targetId: string) {

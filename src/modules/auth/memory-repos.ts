@@ -34,6 +34,10 @@ export class InMemoryUserRepo implements UserRepo {
       u.tokenVersion += 1;
     }
   }
+  async updateName(id: string, name: string): Promise<void> {
+    const u = this.byId.get(id);
+    if (u) (u as UserRecord & { name?: string }).name = name;
+  }
   /** helper de teste */
   markDeleted(id: string): void {
     const u = this.byId.get(id);

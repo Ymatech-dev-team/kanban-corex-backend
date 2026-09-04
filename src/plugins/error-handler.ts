@@ -5,7 +5,10 @@ import { AppError, errorBody } from "../lib/errors.js";
 export function registerErrorHandler(app: FastifyInstance): void {
   app.setErrorHandler((error, req, reply) => {
     // Erro de validação de schema (Zod) — nunca vaza detalhe interno.
-    if ((error as { validation?: unknown }).validation) {
+    // `.validation` cobre o caminho normal; `FST_ERR_VALIDATION` cobre o `.refine`
+    // (ZodEffects), que o provider lança como ZodError sem a prop `.validation`.
+    const e = error as { validation?: unknown; code?: string };
+    if (e.validation || e.code === "FST_ERR_VALIDATION") {
       return reply.status(400).send(errorBody("VALIDACAO", "Dados inválidos"));
     }
     if (error instanceof AppError) {

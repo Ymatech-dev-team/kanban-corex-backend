@@ -52,6 +52,9 @@ export class PrismaUserRepo implements UserRepo {
       data: { passwordHash, mustChangePassword: false, tokenVersion: { increment: 1 } },
     });
   }
+  async updateName(id: string, name: string): Promise<void> {
+    await this.db.user.update({ where: { id }, data: { name } });
+  }
 }
 
 export class PrismaRefreshRepo implements RefreshTokenRepo {

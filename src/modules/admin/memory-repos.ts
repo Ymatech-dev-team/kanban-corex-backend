@@ -47,6 +47,8 @@ export class InMemoryMemberRepo implements MemberRepo {
       roleId: m.roleId,
       extraPermissions: m.extraPermissions,
       mustChangePassword: m.mustChangePassword,
+      compensationType: m.compensationType ?? null,
+      compensationCents: m.compensationCents ?? null,
     };
   }
 
@@ -102,6 +104,13 @@ export class InMemoryMemberRepo implements MemberRepo {
     if (m) {
       m.mustChangePassword = true;
       m.tokenVersion += 1;
+    }
+  }
+  async setCompensation(id: string, type: string | null, cents: number | null): Promise<void> {
+    const m = this.store.members.get(id);
+    if (m) {
+      m.compensationType = type;
+      m.compensationCents = cents;
     }
   }
   readonly nulledAssignees: string[] = [];

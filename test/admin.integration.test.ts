@@ -48,16 +48,19 @@ beforeAll(async () => {
   const users = new InMemoryAuthzUserRepo()
     .add({ id: "admin", orgId: "o1", deletedAt: null, tokenVersion: 0, mustChangePassword: false, rolePermissions: ADMIN_PERMS, extraPermissions: [] })
     .add({ id: "mgr", orgId: "o1", deletedAt: null, tokenVersion: 0, mustChangePassword: false, rolePermissions: MGR_PERMS, extraPermissions: [] })
-    .add({ id: "bob", orgId: "o1", deletedAt: null, tokenVersion: 0, mustChangePassword: false, rolePermissions: [], extraPermissions: [] });
+    .add({ id: "bob", orgId: "o1", deletedAt: null, tokenVersion: 0, mustChangePassword: false, rolePermissions: [], extraPermissions: [] })
+    .add({ id: "viewer", orgId: "o1", deletedAt: null, tokenVersion: 0, mustChangePassword: false, rolePermissions: [PERMISSIONS.membros_ver], extraPermissions: [] });
 
   const store = new InMemoryAdminStore()
     .addRole(role("R_admin", ADMIN_PERMS))
     .addRole(role("R_mgr", MGR_PERMS))
     .addRole(role("R_sys", ADMIN_PERMS, true))
     .addRole(role("R_plain", [PERMISSIONS.tarefas_criar]))
+    .addRole(role("R_view", [PERMISSIONS.membros_ver]))
     .addMember(member("admin", "R_admin"))
     .addMember(member("mgr", "R_mgr"))
-    .addMember(member("bob", null));
+    .addMember(member("bob", null))
+    .addMember(member("viewer", "R_view"));
 
   memberRepo = new InMemoryMemberRepo(store);
   const roleRepo = new InMemoryRoleRepo(store);
@@ -93,6 +96,37 @@ describe("painel admin (5c)", () => {
     const res = await call("GET", "/members", "admin");
     expect(res.statusCode).toBe(200);
     expect(res.json().members.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it("admin define remuneração de bob (mensal R$2500) → 200", async () => {
+    const res = await call("PATCH", "/members/bob/compensation", "admin", { type: "MONTHLY", amountCents: 250000 });
+    expect(res.statusCode).toBe(200);
+    const list = await call("GET", "/members", "admin");
+    const bob = list.json().members.find((m: { id: string }) => m.id === "bob");
+    expect(bob.compensationType).toBe("MONTHLY");
+    expect(bob.compensationCents).toBe(250000);
+  });
+
+  it("viewer (só membros.ver) NÃO enxerga a remuneração → vem null", async () => {
+    const res = await call("GET", "/members", "viewer");
+    const bob = res.json().members.find((m: { id: string }) => m.id === "bob");
+    expect(bob.compensationType).toBeNull();
+    expect(bob.compensationCents).toBeNull();
+  });
+
+  it("tipo sem valor (par incompleto) → 400", async () => {
+    const res = await call("PATCH", "/members/bob/compensation", "admin", { type: "HOURLY", amountCents: null });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it("limpar remuneração (ambos null) → 200", async () => {
+    const res = await call("PATCH", "/members/bob/compensation", "admin", { type: null, amountCents: null });
+    expect(res.statusCode).toBe(200);
+  });
+
+  it("sem membros.gerenciar não pode editar remuneração → 403", async () => {
+    const res = await call("PATCH", "/members/bob/compensation", "viewer", { type: "MONTHLY", amountCents: 100000 });
+    expect(res.statusCode).toBe(403);
   });
 
   it("bob sem membros.ver → 403", async () => {

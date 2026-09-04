@@ -30,6 +30,8 @@ export interface UserRepo {
   findById(id: string): Promise<UserRecord | null>;
   /** Define nova senha, limpa mustChangePassword e faz bump do tokenVersion (mata sessões). */
   setNewPassword(id: string, passwordHash: string): Promise<void>;
+  /** Atualiza o nome do usuário (não mexe em sessão). */
+  updateName(id: string, name: string): Promise<void>;
 }
 
 export interface RefreshTokenRepo {

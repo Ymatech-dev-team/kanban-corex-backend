@@ -6,6 +6,8 @@ export interface SessionContext {
   orgId: string;
   permissions: Set<Permission>;
   mustChangePassword: boolean;
+  name?: string;
+  email?: string;
 }
 
 export interface AuthzUserRecord {
@@ -16,6 +18,8 @@ export interface AuthzUserRecord {
   mustChangePassword: boolean;
   rolePermissions: string[]; // do perfil
   extraPermissions: string[]; // aditivas por usuário (grant-only)
+  name?: string;
+  email?: string;
 }
 
 export interface AuthzUserRepo {
