@@ -33,6 +33,9 @@ import { RoleService } from "./modules/admin/role.service.js";
 import { PrismaMemberRepo, PrismaRoleRepo } from "./modules/admin/prisma-repos.js";
 import { makeAdminRoutes } from "./modules/admin/admin.routes.js";
 import { makeAccountRoutes } from "./modules/account/account.routes.js";
+import { CostService } from "./modules/cost/cost.service.js";
+import { PrismaOrgRepo, PrismaCostRepo } from "./modules/cost/prisma-repos.js";
+import { makeCostRoutes } from "./modules/cost/cost.routes.js";
 
 export interface AppDeps {
   authService?: AuthService;
@@ -43,6 +46,7 @@ export interface AppDeps {
   taskService?: TaskService;
   memberService?: MemberService;
   roleService?: RoleService;
+  costService?: CostService;
 }
 
 function tokenConfigFromEnv(): TokenConfig {
@@ -118,6 +122,7 @@ export function buildApp(deps: AppDeps = {}): FastifyInstance {
   let taskService = deps.taskService;
   let memberService = deps.memberService;
   let roleService = deps.roleService;
+  let costService = deps.costService;
   if (process.env.DATABASE_URL) {
     tokenService = tokenService ?? new TokenService(tokenConfigFromEnv());
     const db = getPrisma();
@@ -141,6 +146,7 @@ export function buildApp(deps: AppDeps = {}): FastifyInstance {
       memberService ??
       new MemberService(memberRepo, roleRepo, new PasswordService(12), new PrismaRefreshRepo(db), auditRepo);
     roleService = roleService ?? new RoleService(roleRepo, memberRepo, auditRepo);
+    costService = costService ?? new CostService(new PrismaOrgRepo(db), new PrismaCostRepo(db));
   }
 
   if (authService && tokenService) {
@@ -160,6 +166,9 @@ export function buildApp(deps: AppDeps = {}): FastifyInstance {
   }
   if (authenticate && authorizer && memberService && roleService) {
     typed.register(makeAdminRoutes(authenticate, authorizer, memberService, roleService));
+  }
+  if (authenticate && authorizer && costService) {
+    typed.register(makeCostRoutes(authenticate, authorizer, costService));
   }
 
   return app;

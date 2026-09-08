@@ -37,6 +37,7 @@ export class InMemoryTaskRepo implements TaskRepo {
       priority: t.priority,
       dueDate: t.dueDate ?? null,
       assigneeId: t.assigneeId ?? null,
+      estimatedMinutes: t.estimatedMinutes ?? null,
       position: t.position,
       createdById: t.createdById,
       deletedAt: null,
@@ -78,6 +79,7 @@ export class InMemoryTaskRepo implements TaskRepo {
     if (patch.priority !== undefined) t.priority = patch.priority;
     if (patch.dueDate !== undefined) t.dueDate = patch.dueDate;
     if (patch.assigneeId !== undefined) t.assigneeId = patch.assigneeId;
+    if (patch.estimatedMinutes !== undefined) t.estimatedMinutes = patch.estimatedMinutes;
     t.updatedAt = new Date();
     return { ...t };
   }

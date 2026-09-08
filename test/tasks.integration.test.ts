@@ -83,6 +83,15 @@ describe("tarefas (5b)", () => {
     expect(res.json().priority).toBe("HIGH");
   });
 
+  it("u1 define e edita horas estimadas (estimatedMinutes)", async () => {
+    const created = await call("POST", `/projects/${P}/tasks`, "u1", { title: "Com horas", estimatedMinutes: 90 });
+    expect(created.statusCode).toBe(200);
+    expect(created.json().estimatedMinutes).toBe(90);
+    const patched = await call("PATCH", `/tasks/${created.json().id}`, "u1", { estimatedMinutes: 120 });
+    expect(patched.statusCode).toBe(200);
+    expect(patched.json().estimatedMinutes).toBe(120);
+  });
+
   it("edição com If-Unmodified-Since velho → 409 (conflito)", async () => {
     const res = await call("PATCH", `/tasks/${taskId}`, "u1", { title: "X" }, {
       "if-unmodified-since": "2020-01-01T00:00:00.000Z",

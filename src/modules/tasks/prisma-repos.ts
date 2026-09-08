@@ -13,6 +13,7 @@ import type {
 type PrismaTask = {
   id: string; orgId: string; projectId: string; title: string; description: string | null;
   status: string; priority: string; dueDate: Date | null; assigneeId: string | null;
+  estimatedMinutes: number | null;
   position: number; createdById: string; deletedAt: Date | null; createdAt: Date; updatedAt: Date;
 };
 function toTask(t: PrismaTask): TaskRecord {
@@ -40,6 +41,7 @@ export class PrismaTaskRepo implements TaskRepo {
         priority: t.priority,
         dueDate: t.dueDate ?? null,
         assigneeId: t.assigneeId ?? null,
+        estimatedMinutes: t.estimatedMinutes ?? null,
         position: t.position,
         createdById: t.createdById,
       },
@@ -87,6 +89,7 @@ export class PrismaTaskRepo implements TaskRepo {
         priority: patch.priority,
         dueDate: patch.dueDate,
         assigneeId: patch.assigneeId,
+        estimatedMinutes: patch.estimatedMinutes,
       },
     });
     return toTask(updated);

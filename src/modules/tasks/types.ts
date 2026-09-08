@@ -10,6 +10,7 @@ export interface TaskRecord {
   priority: TaskPriority;
   dueDate: Date | null;
   assigneeId: string | null;
+  estimatedMinutes: number | null;
   position: number;
   createdById: string;
   deletedAt: Date | null;
@@ -26,6 +27,7 @@ export interface NewTask {
   priority: TaskPriority;
   dueDate?: Date | null;
   assigneeId?: string | null;
+  estimatedMinutes?: number | null;
   position: number;
   createdById: string;
 }
@@ -37,6 +39,7 @@ export interface TaskPatch {
   priority?: TaskPriority;
   dueDate?: Date | null;
   assigneeId?: string | null;
+  estimatedMinutes?: number | null;
 }
 
 export interface TaskFilterOpts {

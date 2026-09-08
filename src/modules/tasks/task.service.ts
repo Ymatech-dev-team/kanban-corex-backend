@@ -47,6 +47,7 @@ export class TaskService {
         priority: input.priority ?? "MEDIUM",
         dueDate: input.dueDate ? new Date(input.dueDate) : null,
         assigneeId: input.assigneeId ?? null,
+        estimatedMinutes: input.estimatedMinutes ?? null,
         position,
         createdById: session.userId,
       });
@@ -83,6 +84,7 @@ export class TaskService {
       priority: patch.priority,
       dueDate: patch.dueDate === undefined ? undefined : patch.dueDate ? new Date(patch.dueDate) : null,
       assigneeId: patch.assigneeId,
+      estimatedMinutes: patch.estimatedMinutes,
     };
     return this.tasks.update(task.id, data);
   }

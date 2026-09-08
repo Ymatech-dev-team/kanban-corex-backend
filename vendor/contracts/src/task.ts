@@ -10,6 +10,7 @@ export const createTaskSchema = z.object({
   priority: taskPrioritySchema.optional(),
   dueDate: z.string().datetime().optional(),
   assigneeId: z.string().optional(),
+  estimatedMinutes: z.number().int().min(0).max(1_000_000).nullable().optional(),
 });
 export type CreateTaskInput = z.infer<typeof createTaskSchema>;
 
@@ -20,6 +21,7 @@ export const updateTaskSchema = z.object({
   priority: taskPrioritySchema.optional(),
   dueDate: z.string().datetime().nullable().optional(),
   assigneeId: z.string().nullable().optional(),
+  estimatedMinutes: z.number().int().min(0).max(1_000_000).nullable().optional(),
   // projectId é IMUTÁVEL via PATCH [SEC-106] — nem entra no schema.
 });
 export type UpdateTaskInput = z.infer<typeof updateTaskSchema>;

@@ -20,6 +20,7 @@ export const PERMISSIONS = {
   tarefas_mover: "tarefas.mover",
   tarefas_excluir: "tarefas.excluir",
   subtarefas_gerenciar: "subtarefas.gerenciar",
+  custos_ver: "custos.ver",
 } as const;
 
 export type Permission = (typeof PERMISSIONS)[keyof typeof PERMISSIONS];
@@ -45,6 +46,7 @@ export const PERMISSION_SCOPE: Record<Permission, "org" | "project"> = {
   "tarefas.mover": "project",
   "tarefas.excluir": "project",
   "subtarefas.gerenciar": "project",
+  "custos.ver": "project",
 };
 
 /** Meta-permissões: concessão exige confirmação reforçada e auditoria à parte. [SEC-104/111] */

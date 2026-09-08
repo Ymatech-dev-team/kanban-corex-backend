@@ -28,7 +28,10 @@ export function makeProjectRoutes(
 
     r.get("/projects/:id", { preHandler: authenticate, schema: { params: idParams } }, async (req) => {
       await authz.assertProjectAccess(req.session!, req.params.id);
-      return service.getOrThrow(req.session!, req.params.id);
+      const project = await service.getOrThrow(req.session!, req.params.id);
+      // Sinal só-de-render pro front decidir mostrar a aba Custo; backend segue sendo a barreira. [review]
+      const canSeeCost = await authz.can(req.session!, PERMISSIONS.custos_ver, req.params.id);
+      return { ...project, canSeeCost };
     });
 
     r.patch(

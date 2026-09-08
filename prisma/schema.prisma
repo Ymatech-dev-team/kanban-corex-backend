@@ -17,10 +17,11 @@ generator client {
 }
 
 model Organization {
-  id        String    @id @default(cuid())
-  name      String
-  createdAt DateTime  @default(now())
-  users     User[]
+  id           String    @id @default(cuid())
+  name         String
+  monthlyHours Int       @default(176) // horas-mês padrão: divisor salário mensal -> custo-hora
+  createdAt    DateTime  @default(now())
+  users        User[]
   roles     Role[]
   projects  Project[]
 
@@ -127,6 +128,7 @@ model Task {
   priority        String    @default("MEDIUM") // LOW|MEDIUM|HIGH (CHECK)
   dueDate         DateTime?
   assigneeId      String?
+  estimatedMinutes Int? // horas estimadas (em minutos) para custo de alocação
   position        Float     @default(0)
   createdById     String
   deletionBatchId String?
