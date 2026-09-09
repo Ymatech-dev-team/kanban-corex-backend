@@ -24,6 +24,14 @@ describe("catálogo de permissões (fonte única)", () => {
     expect(isProjectScoped("membros.gerenciar")).toBe(false);
   });
 
+  it("permissões de projeto (engagements.*) são projeto-escopadas", () => {
+    expect(PERMISSIONS.engagements_criar).toBe("engagements.criar");
+    expect(isProjectScoped("engagements.criar")).toBe(true);
+    expect(isProjectScoped("engagements.editar")).toBe(true);
+    expect(isProjectScoped("engagements.excluir")).toBe(true);
+    expect(isProjectScoped("engagements.consultores")).toBe(true);
+  });
+
   it("Zod rejeita string fora do catálogo (sem wildcard)", () => {
     expect(permissionSchema.safeParse("tarefa.mover").success).toBe(false); // typo sem 's'
     expect(permissionSchema.safeParse("tarefas.*").success).toBe(false);

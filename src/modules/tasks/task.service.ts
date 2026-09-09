@@ -4,6 +4,7 @@ import { AppError } from "../../lib/errors.js";
 import { withIdempotency, type IdempotencyStore } from "../../lib/idempotency.js";
 import type { SessionContext } from "../authz/types.js";
 import type { ProjectAccessRepo } from "../projects/types.js";
+import { generalEngagementId } from "../engagements/general.js";
 import type { SubtaskRepo, TaskFilterOpts, TaskPatch, TaskRecord, TaskRepo } from "./types.js";
 
 export class TaskService {
@@ -33,14 +34,18 @@ export class TaskService {
     projectId: string,
     input: CreateTaskInput,
     idempotencyKey?: string,
+    engagementId?: string,
   ): Promise<TaskRecord> {
     await this.assertAssigneeAccess(input.assigneeId ?? null, projectId);
+    // Sem engagement explícito (endpoint antigo por cliente), cai no "Projeto geral" do cliente. [hierarquia-projetos]
+    const targetEngagement = engagementId ?? generalEngagementId(projectId);
     const status: TaskStatus = input.status ?? "TODO";
     const { result } = await withIdempotency(this.idempotency, idempotencyKey, session.userId, async () => {
-      const position = (await this.tasks.maxPosition(projectId, status)) + 1;
+      const position = (await this.tasks.maxPositionByEngagement(targetEngagement, status)) + 1;
       return this.tasks.create({
         orgId: session.orgId,
         projectId,
+        engagementId: targetEngagement,
         title: input.title,
         description: input.description,
         status,
@@ -109,8 +114,16 @@ export class TaskService {
     await this.tasks.softDelete(id);
   }
 
-  async listByProject(projectId: string, filters: TaskFilterOpts): Promise<{ tasks: TaskRecord[] }> {
-    return { tasks: await this.tasks.listByProject(projectId, filters) };
+  async listByProject(orgId: string, projectId: string, filters: TaskFilterOpts): Promise<{ tasks: TaskRecord[] }> {
+    return { tasks: await this.tasks.listByProject(projectId, orgId, filters) };
+  }
+
+  async listByEngagement(
+    orgId: string,
+    engagementId: string,
+    filters: TaskFilterOpts,
+  ): Promise<{ tasks: TaskRecord[] }> {
+    return { tasks: await this.tasks.listByEngagement(engagementId, orgId, filters) };
   }
 
   /** "Minhas tarefas" — SEMPRE interseccionado com os projetos acessíveis. [SEC-107] */

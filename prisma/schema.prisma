@@ -48,6 +48,7 @@ model User {
   refreshTokens RefreshToken[]
   assignedTasks Task[]          @relation("assignee")
   projectAccess ProjectMember[]
+  engagementParticipation EngagementMember[]
 
   @@index([orgId])
   @@map("users")
@@ -99,10 +100,48 @@ model Project {
   organization Organization    @relation(fields: [orgId], references: [id])
   tasks        Task[]
   members      ProjectMember[]
+  engagements  Engagement[]
 
   @@unique([id, orgId]) // habilita a FK composta de integridade de tenant [ARQ]
   @@index([orgId])
   @@map("projects")
+}
+
+// Projeto (UI). Nível entre Cliente(Project) e Tarefa(Task). [hierarquia-projetos]
+model Engagement {
+  id              String    @id @default(cuid())
+  orgId           String
+  projectId       String // Cliente dono
+  name            String
+  description     String?
+  createdById     String
+  deletionBatchId String?
+  deletedAt       DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  project Project            @relation(fields: [projectId, orgId], references: [id, orgId])
+  tasks   Task[]
+  members EngagementMember[]
+
+  @@unique([id, projectId, orgId]) // habilita a FK tripla de tenant em tasks [ARQ]
+  @@index([projectId])
+  @@index([orgId])
+  @@map("engagements")
+}
+
+// Consultores do projeto — participação (subconjunto dos membros do Cliente). [hierarquia-projetos]
+model EngagementMember {
+  engagementId String
+  userId       String
+  createdAt    DateTime @default(now())
+
+  engagement Engagement @relation(fields: [engagementId], references: [id])
+  user       User       @relation(fields: [userId], references: [id])
+
+  @@id([engagementId, userId])
+  @@index([userId])
+  @@map("engagement_members")
 }
 
 model ProjectMember {
@@ -121,7 +160,8 @@ model ProjectMember {
 model Task {
   id              String    @id @default(cuid())
   orgId           String
-  projectId       String
+  projectId       String // Cliente (chave de acesso/tenant; mantida por FK)
+  engagementId    String // Projeto (pai real) [hierarquia-projetos]
   title           String
   description     String?
   status          String    @default("TODO") // TODO|DOING|DONE (CHECK)
@@ -137,12 +177,15 @@ model Task {
   updatedAt       DateTime  @updatedAt
 
   // FK composta garante task.orgId == project.orgId [ARQ]
-  project  Project   @relation(fields: [projectId, orgId], references: [id, orgId])
-  assignee User?     @relation("assignee", fields: [assigneeId], references: [id])
-  subtasks Subtask[]
+  project    Project    @relation(fields: [projectId, orgId], references: [id, orgId])
+  // Pai real; a coerência engagement.projectId == task.projectId é garantida pela FK tripla no banco (SQL 006).
+  engagement Engagement @relation(fields: [engagementId], references: [id])
+  assignee   User?      @relation("assignee", fields: [assigneeId], references: [id])
+  subtasks   Subtask[]
 
   @@index([orgId])
   @@index([projectId, status, position])
+  @@index([engagementId, status, position])
   @@index([assigneeId])
   @@index([dueDate])
   @@map("tasks")

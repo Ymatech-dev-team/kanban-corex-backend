@@ -1,12 +1,27 @@
 import type { PrismaClient } from "@prisma/client";
+import { generalEngagementId } from "../engagements/general.js";
 import type { NewProject, ProjectAccessRepo, ProjectMemberView, ProjectRecord, ProjectRepo } from "./types.js";
 
 export class PrismaProjectRepo implements ProjectRepo {
   constructor(private readonly db: PrismaClient) {}
 
   async create(p: NewProject): Promise<ProjectRecord> {
-    return this.db.project.create({
-      data: { orgId: p.orgId, name: p.name, description: p.description ?? null, createdById: p.createdById },
+    // Cria o cliente E seu "Projeto geral" (gen-<clienteId>) na mesma transação, para que
+    // toda tarefa do cliente tenha um projeto pai desde o início. [hierarquia-projetos]
+    return this.db.$transaction(async (tx) => {
+      const project = await tx.project.create({
+        data: { orgId: p.orgId, name: p.name, description: p.description ?? null, createdById: p.createdById },
+      });
+      await tx.engagement.create({
+        data: {
+          id: generalEngagementId(project.id),
+          orgId: project.orgId,
+          projectId: project.id,
+          name: "Projeto geral",
+          createdById: p.createdById,
+        },
+      });
+      return project;
     });
   }
   async findById(id: string, orgId: string): Promise<ProjectRecord | null> {
@@ -30,6 +45,11 @@ export class PrismaProjectRepo implements ProjectRepo {
     await this.db.$transaction([
       this.db.project.update({ where: { id }, data: { deletedAt: now, deletionBatchId: batchId } }),
       this.db.task.updateMany({
+        where: { projectId: id, deletedAt: null },
+        data: { deletedAt: now, deletionBatchId: batchId },
+      }),
+      // Cascata para os Projetos (engagements) do cliente — senão ficam órfãos ativos. [review arq ALTO 1]
+      this.db.engagement.updateMany({
         where: { projectId: id, deletedAt: null },
         data: { deletedAt: now, deletionBatchId: batchId },
       }),

@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { AppError } from "../../lib/errors.js";
 import type { AuditRepo, SessionContext } from "../authz/types.js";
 import { PERMISSIONS } from "@sistema-tasks/contracts";
+import type { EngagementMemberRepo } from "../engagements/types.js";
 import type { ProjectAccessRepo, ProjectMemberView, ProjectRecord, ProjectRepo } from "./types.js";
 
 /** Regra de negócio de projetos (= clientes). A autorização é feita nas rotas (authenticate + Authorizer). */
@@ -10,6 +11,7 @@ export class ProjectService {
     private readonly projects: ProjectRepo,
     private readonly access: ProjectAccessRepo,
     private readonly audit: AuditRepo,
+    private readonly engagementMembers?: EngagementMemberRepo,
   ) {}
 
   async create(session: SessionContext, input: { name: string; description?: string }): Promise<ProjectRecord> {
@@ -75,6 +77,8 @@ export class ProjectService {
     await this.getOrThrow(session, projectId);
     await this.access.revoke(projectId, userId);
     await this.access.nullAssigneesInProject(projectId, userId); // [SEC-110]
+    // Perdeu acesso ao cliente → sai de consultor de todos os projetos daquele cliente. [RF-42]
+    await this.engagementMembers?.removeUserFromClientEngagements(projectId, userId);
     await this.audit.record({
       actorId: session.userId,
       targetUserId: userId,

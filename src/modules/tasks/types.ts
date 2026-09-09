@@ -4,6 +4,7 @@ export interface TaskRecord {
   id: string;
   orgId: string;
   projectId: string;
+  engagementId: string;
   title: string;
   description: string | null;
   status: TaskStatus;
@@ -21,6 +22,7 @@ export interface TaskRecord {
 export interface NewTask {
   orgId: string;
   projectId: string;
+  engagementId: string;
   title: string;
   description?: string;
   status: TaskStatus;
@@ -53,12 +55,13 @@ export interface TaskFilterOpts {
 export interface TaskRepo {
   create(t: NewTask): Promise<TaskRecord>;
   findById(id: string, orgId: string): Promise<TaskRecord | null>;
-  listByProject(projectId: string, filters: TaskFilterOpts): Promise<TaskRecord[]>;
+  listByProject(projectId: string, orgId: string, filters: TaskFilterOpts): Promise<TaskRecord[]>;
+  listByEngagement(engagementId: string, orgId: string, filters: TaskFilterOpts): Promise<TaskRecord[]>;
   listMine(userId: string, projectIds: string[] | "all", orgId: string, filters: TaskFilterOpts): Promise<TaskRecord[]>;
   update(id: string, patch: TaskPatch): Promise<TaskRecord>;
   move(id: string, status: TaskStatus, position: number): Promise<TaskRecord>;
   softDelete(id: string): Promise<void>;
-  maxPosition(projectId: string, status: TaskStatus): Promise<number>;
+  maxPositionByEngagement(engagementId: string, status: TaskStatus): Promise<number>;
 }
 
 export interface SubtaskRecord {

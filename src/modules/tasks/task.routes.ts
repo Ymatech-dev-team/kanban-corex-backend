@@ -40,7 +40,7 @@ export function makeTaskRoutes(authenticate: Authenticate, authz: Authorizer, se
       { preHandler: authenticate, schema: { params: projectParams, querystring: taskFiltersSchema } },
       async (req) => {
         await authz.assertProjectAccess(req.session!, req.params.projectId);
-        return service.listByProject(req.params.projectId, req.query);
+        return service.listByProject(req.session!.orgId, req.params.projectId, req.query);
       },
     );
 

@@ -36,6 +36,9 @@ import { makeAccountRoutes } from "./modules/account/account.routes.js";
 import { CostService } from "./modules/cost/cost.service.js";
 import { PrismaOrgRepo, PrismaCostRepo } from "./modules/cost/prisma-repos.js";
 import { makeCostRoutes } from "./modules/cost/cost.routes.js";
+import { EngagementService } from "./modules/engagements/engagement.service.js";
+import { PrismaEngagementRepo, PrismaEngagementMemberRepo } from "./modules/engagements/prisma-repos.js";
+import { makeEngagementRoutes } from "./modules/engagements/engagement.routes.js";
 
 export interface AppDeps {
   authService?: AuthService;
@@ -47,6 +50,7 @@ export interface AppDeps {
   memberService?: MemberService;
   roleService?: RoleService;
   costService?: CostService;
+  engagementService?: EngagementService;
 }
 
 function tokenConfigFromEnv(): TokenConfig {
@@ -123,16 +127,19 @@ export function buildApp(deps: AppDeps = {}): FastifyInstance {
   let memberService = deps.memberService;
   let roleService = deps.roleService;
   let costService = deps.costService;
+  let engagementService = deps.engagementService;
   if (process.env.DATABASE_URL) {
     tokenService = tokenService ?? new TokenService(tokenConfigFromEnv());
     const db = getPrisma();
     const accessRepo = new PrismaProjectAccessRepo(db);
     const auditRepo = new PrismaAuditRepo(db);
     const roleRepo = new PrismaRoleRepo(db);
+    const engagementMemberRepo = new PrismaEngagementMemberRepo(db);
     authService = authService ?? buildProdAuthService(tokenService);
     authenticate = authenticate ?? makeAuthenticate({ tokens: tokenService, users: new PrismaAuthzUserRepo(db) });
     authorizer = authorizer ?? new Authorizer(accessRepo);
-    projectService = projectService ?? new ProjectService(new PrismaProjectRepo(db), accessRepo, auditRepo);
+    projectService =
+      projectService ?? new ProjectService(new PrismaProjectRepo(db), accessRepo, auditRepo, engagementMemberRepo);
     taskService =
       taskService ??
       new TaskService(
@@ -147,6 +154,8 @@ export function buildApp(deps: AppDeps = {}): FastifyInstance {
       new MemberService(memberRepo, roleRepo, new PasswordService(12), new PrismaRefreshRepo(db), auditRepo);
     roleService = roleService ?? new RoleService(roleRepo, memberRepo, auditRepo);
     costService = costService ?? new CostService(new PrismaOrgRepo(db), new PrismaCostRepo(db));
+    engagementService =
+      engagementService ?? new EngagementService(new PrismaEngagementRepo(db), engagementMemberRepo, accessRepo);
   }
 
   if (authService && tokenService) {
@@ -169,6 +178,9 @@ export function buildApp(deps: AppDeps = {}): FastifyInstance {
   }
   if (authenticate && authorizer && costService) {
     typed.register(makeCostRoutes(authenticate, authorizer, costService));
+  }
+  if (authenticate && authorizer && engagementService && taskService && costService) {
+    typed.register(makeEngagementRoutes(authenticate, authorizer, engagementService, taskService, costService));
   }
 
   return app;

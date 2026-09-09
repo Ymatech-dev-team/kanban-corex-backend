@@ -50,5 +50,6 @@ export interface OrgRepo {
 
 export interface CostRepo {
   projectCostRows(projectId: string, orgId: string): Promise<CostRow[]>;
+  engagementCostRows(engagementId: string, projectId: string, orgId: string): Promise<CostRow[]>;
   taskCostRow(taskId: string, orgId: string): Promise<(CostRow & { projectId: string }) | null>;
 }

@@ -11,7 +11,7 @@ import type {
 } from "./types.js";
 
 type PrismaTask = {
-  id: string; orgId: string; projectId: string; title: string; description: string | null;
+  id: string; orgId: string; projectId: string; engagementId: string; title: string; description: string | null;
   status: string; priority: string; dueDate: Date | null; assigneeId: string | null;
   estimatedMinutes: number | null;
   position: number; createdById: string; deletedAt: Date | null; createdAt: Date; updatedAt: Date;
@@ -35,6 +35,7 @@ export class PrismaTaskRepo implements TaskRepo {
       data: {
         orgId: t.orgId,
         projectId: t.projectId,
+        engagementId: t.engagementId,
         title: t.title,
         description: t.description ?? null,
         status: t.status,
@@ -52,9 +53,18 @@ export class PrismaTaskRepo implements TaskRepo {
     const t = await this.db.task.findFirst({ where: { id, orgId, deletedAt: null } });
     return t ? toTask(t) : null;
   }
-  async listByProject(projectId: string, f: TaskFilterOpts): Promise<TaskRecord[]> {
+  async listByProject(projectId: string, orgId: string, f: TaskFilterOpts): Promise<TaskRecord[]> {
+    // orgId no WHERE fecha cross-org mesmo se assertProjectAccess liberar por acesso_todos. [SEC-004/SEC-001]
     const rows = await this.db.task.findMany({
-      where: { projectId, deletedAt: null, ...whereFilters(f) },
+      where: { projectId, orgId, deletedAt: null, ...whereFilters(f) },
+      orderBy: [{ position: "asc" }, { id: "asc" }],
+      take: f.limit ?? 100,
+    });
+    return rows.map(toTask);
+  }
+  async listByEngagement(engagementId: string, orgId: string, f: TaskFilterOpts): Promise<TaskRecord[]> {
+    const rows = await this.db.task.findMany({
+      where: { engagementId, orgId, deletedAt: null, ...whereFilters(f) },
       orderBy: [{ position: "asc" }, { id: "asc" }],
       take: f.limit ?? 100,
     });
@@ -101,9 +111,9 @@ export class PrismaTaskRepo implements TaskRepo {
   async softDelete(id: string): Promise<void> {
     await this.db.task.update({ where: { id }, data: { deletedAt: new Date() } });
   }
-  async maxPosition(projectId: string, status: TaskStatus): Promise<number> {
+  async maxPositionByEngagement(engagementId: string, status: TaskStatus): Promise<number> {
     const agg = await this.db.task.aggregate({
-      where: { projectId, status, deletedAt: null },
+      where: { engagementId, status, deletedAt: null },
       _max: { position: true },
     });
     return agg._max.position ?? 0;

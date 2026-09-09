@@ -21,6 +21,10 @@ export const PERMISSIONS = {
   tarefas_excluir: "tarefas.excluir",
   subtarefas_gerenciar: "subtarefas.gerenciar",
   custos_ver: "custos.ver",
+  engagements_criar: "engagements.criar",
+  engagements_editar: "engagements.editar",
+  engagements_excluir: "engagements.excluir",
+  engagements_consultores: "engagements.consultores",
 } as const;
 
 export type Permission = (typeof PERMISSIONS)[keyof typeof PERMISSIONS];
@@ -47,6 +51,10 @@ export const PERMISSION_SCOPE: Record<Permission, "org" | "project"> = {
   "tarefas.excluir": "project",
   "subtarefas.gerenciar": "project",
   "custos.ver": "project",
+  "engagements.criar": "project",
+  "engagements.editar": "project",
+  "engagements.excluir": "project",
+  "engagements.consultores": "project",
 };
 
 /** Meta-permissões: concessão exige confirmação reforçada e auditoria à parte. [SEC-104/111] */

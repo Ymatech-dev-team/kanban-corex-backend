@@ -31,6 +31,7 @@ export class InMemoryTaskRepo implements TaskRepo {
       id: randomUUID(),
       orgId: t.orgId,
       projectId: t.projectId,
+      engagementId: t.engagementId,
       title: t.title,
       description: t.description ?? null,
       status: t.status,
@@ -51,8 +52,16 @@ export class InMemoryTaskRepo implements TaskRepo {
     const t = this.byId.get(id);
     return t && t.orgId === orgId && !t.deletedAt ? { ...t } : null;
   }
-  async listByProject(projectId: string, f: TaskFilterOpts): Promise<TaskRecord[]> {
-    const list = [...this.byId.values()].filter((t) => t.projectId === projectId && !t.deletedAt);
+  async listByProject(projectId: string, orgId: string, f: TaskFilterOpts): Promise<TaskRecord[]> {
+    const list = [...this.byId.values()].filter(
+      (t) => t.projectId === projectId && t.orgId === orgId && !t.deletedAt,
+    );
+    return sortAndPage(applyFilters(list, f), f).map((t) => ({ ...t }));
+  }
+  async listByEngagement(engagementId: string, orgId: string, f: TaskFilterOpts): Promise<TaskRecord[]> {
+    const list = [...this.byId.values()].filter(
+      (t) => t.engagementId === engagementId && t.orgId === orgId && !t.deletedAt,
+    );
     return sortAndPage(applyFilters(list, f), f).map((t) => ({ ...t }));
   }
   async listMine(
@@ -95,9 +104,9 @@ export class InMemoryTaskRepo implements TaskRepo {
     const t = this.byId.get(id);
     if (t) t.deletedAt = new Date();
   }
-  async maxPosition(projectId: string, status: TaskRecord["status"]): Promise<number> {
+  async maxPositionByEngagement(engagementId: string, status: TaskRecord["status"]): Promise<number> {
     const ps = [...this.byId.values()]
-      .filter((t) => t.projectId === projectId && t.status === status && !t.deletedAt)
+      .filter((t) => t.engagementId === engagementId && t.status === status && !t.deletedAt)
       .map((t) => t.position);
     return ps.length ? Math.max(...ps) : 0;
   }

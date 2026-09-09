@@ -9,11 +9,13 @@ import { Authorizer } from "../src/modules/authz/authorizer.js";
 import { InMemoryAuthzUserRepo, InMemoryAuditRepo } from "../src/modules/authz/memory-repos.js";
 import { InMemoryProjectRepo, InMemoryProjectAccessRepo } from "../src/modules/projects/memory-repos.js";
 import { ProjectService } from "../src/modules/projects/project.service.js";
+import { InMemoryEngagementMemberRepo } from "../src/modules/engagements/memory-repos.js";
 
 const SECRET = "internal-test";
 let app: FastifyInstance;
 let tokens: TokenService;
 let access: InMemoryProjectAccessRepo;
+let engMembers: InMemoryEngagementMemberRepo;
 
 beforeAll(async () => {
   delete process.env.DATABASE_URL;
@@ -52,7 +54,8 @@ beforeAll(async () => {
     });
   access = new InMemoryProjectAccessRepo().addUser("u1", "o1", "Ana").addUser("u2", "o1", "Bruno");
   const authorizer = new Authorizer(access);
-  const projectService = new ProjectService(new InMemoryProjectRepo(), access, new InMemoryAuditRepo());
+  engMembers = new InMemoryEngagementMemberRepo();
+  const projectService = new ProjectService(new InMemoryProjectRepo(), access, new InMemoryAuditRepo(), engMembers);
   app = buildApp({
     authenticate: makeAuthenticate({ tokens, users }),
     authorizer,
@@ -132,10 +135,16 @@ describe("projetos + acesso por cliente (5a)", () => {
     expect(res.json().name).toBe("Cliente ACME 2");
   });
 
-  it("u1 revoga acesso de u2 → u2 volta a 404 e assignees são nulados", async () => {
+  it("u1 revoga acesso de u2 → 404, assignees nulados e participação em projetos removida (RF-42)", async () => {
+    // u2 é consultor de um projeto do cliente; revogar o acesso ao cliente deve removê-lo em cascata.
+    const eng = `gen-${projectId}`;
+    engMembers.mapEngagement(eng, projectId);
+    await engMembers.add(eng, "u2");
+
     const revoke = await req("DELETE", `/projects/${projectId}/members/u2`, "u1");
     expect(revoke.statusCode).toBe(200);
     expect(access.nulled).toContainEqual({ projectId, userId: "u2" });
+    expect((await engMembers.list(eng)).some((m) => m.id === "u2")).toBe(false); // cascata RF-42
     const view = await req("GET", `/projects/${projectId}`, "u2");
     expect(view.statusCode).toBe(404);
   });

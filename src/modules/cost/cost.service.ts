@@ -1,5 +1,5 @@
 import { taskCost } from "./calc.js";
-import type { CostRepo, CostSummary, OrgRepo, PerPersonCost, TaskCostResult } from "./types.js";
+import type { CostRepo, CostRow, CostSummary, OrgRepo, PerPersonCost, TaskCostResult } from "./types.js";
 
 /** Agrega custo por cliente e calcula custo de tarefa. Único consumidor de remuneração (via CostRepo). */
 export class CostService {
@@ -15,11 +15,25 @@ export class CostService {
     return { result: taskCost(row, monthlyHours), projectId: row.projectId };
   }
 
+  /** Custo somado do Cliente (roll-up de todos os projetos). */
   async summary(orgId: string, projectId: string): Promise<CostSummary> {
     const [rows, monthlyHours] = await Promise.all([
       this.repo.projectCostRows(projectId, orgId),
       this.org.getMonthlyHours(orgId),
     ]);
+    return this.aggregate(rows, monthlyHours);
+  }
+
+  /** Custo somado de UM projeto (engagement). Mesma agregação, escopada pelas tarefas do projeto. */
+  async engagementSummary(orgId: string, projectId: string, engagementId: string): Promise<CostSummary> {
+    const [rows, monthlyHours] = await Promise.all([
+      this.repo.engagementCostRows(engagementId, projectId, orgId),
+      this.org.getMonthlyHours(orgId),
+    ]);
+    return this.aggregate(rows, monthlyHours);
+  }
+
+  private aggregate(rows: CostRow[], monthlyHours: number): CostSummary {
     let realizadoCents = 0;
     let planejadoCents = 0;
     const incompletos = { semResponsavel: 0, semRemuneracao: 0, semHoras: 0, respSemAcesso: 0 };
