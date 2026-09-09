@@ -8,6 +8,7 @@ import {
   taskFiltersSchema,
   createSubtaskSchema,
   updateSubtaskSchema,
+  addAssigneeSchema,
   PERMISSIONS,
 } from "@sistema-tasks/contracts";
 import type { Authenticate } from "../authz/authenticate.js";
@@ -79,6 +80,38 @@ export function makeTaskRoutes(authenticate: Authenticate, authz: Authorizer, se
       await service.softDelete(task.id);
       return { ok: true };
     });
+
+    const assigneeParams = z.object({ id: z.string().min(1), userId: z.string().min(1) });
+
+    r.post(
+      "/tasks/:id/assignees",
+      { preHandler: authenticate, schema: { params: idParams, body: addAssigneeSchema } },
+      async (req) => {
+        const task = await service.getOrThrow(req.session!, req.params.id);
+        await authz.assertCan(req.session!, PERMISSIONS.tarefas_editar, task.projectId);
+        return service.addAssignee(req.session!, task, req.body.userId);
+      },
+    );
+
+    r.post(
+      "/tasks/:id/assignees/:userId/primary",
+      { preHandler: authenticate, schema: { params: assigneeParams } },
+      async (req) => {
+        const task = await service.getOrThrow(req.session!, req.params.id);
+        await authz.assertCan(req.session!, PERMISSIONS.tarefas_editar, task.projectId);
+        return service.setPrimaryAssignee(req.session!, task, req.params.userId);
+      },
+    );
+
+    r.delete(
+      "/tasks/:id/assignees/:userId",
+      { preHandler: authenticate, schema: { params: assigneeParams } },
+      async (req) => {
+        const task = await service.getOrThrow(req.session!, req.params.id);
+        await authz.assertCan(req.session!, PERMISSIONS.tarefas_editar, task.projectId);
+        return service.removeAssignee(req.session!, task, req.params.userId);
+      },
+    );
 
     r.post(
       "/tasks/:id/subtasks",

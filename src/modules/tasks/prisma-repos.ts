@@ -15,15 +15,26 @@ type PrismaTask = {
   status: string; priority: string; dueDate: Date | null; assigneeId: string | null;
   estimatedMinutes: number | null;
   position: number; createdById: string; deletedAt: Date | null; createdAt: Date; updatedAt: Date;
+  extraAssignees?: { userId: string }[];
 };
 function toTask(t: PrismaTask): TaskRecord {
-  return { ...t, status: t.status as TaskStatus, priority: t.priority as TaskPriority };
+  return {
+    ...t,
+    status: t.status as TaskStatus,
+    priority: t.priority as TaskPriority,
+    extraAssigneeIds: (t.extraAssignees ?? []).map((a) => a.userId),
+  };
 }
+/** include padrão p/ trazer os responsáveis extras junto da tarefa. [detalhe-tarefa A1] */
+const withExtras = { extraAssignees: { select: { userId: true } } } as const;
 function whereFilters(f: TaskFilterOpts): Prisma.TaskWhereInput {
   return {
     ...(f.status ? { status: f.status } : {}),
     ...(f.priority ? { priority: f.priority } : {}),
-    ...(f.assigneeId ? { assigneeId: f.assigneeId } : {}),
+    // filtro por responsável casa principal OU extra [detalhe-tarefa RF-R9]
+    ...(f.assigneeId
+      ? { OR: [{ assigneeId: f.assigneeId }, { extraAssignees: { some: { userId: f.assigneeId } } }] }
+      : {}),
   };
 }
 
@@ -46,11 +57,12 @@ export class PrismaTaskRepo implements TaskRepo {
         position: t.position,
         createdById: t.createdById,
       },
+      include: withExtras,
     });
     return toTask(created);
   }
   async findById(id: string, orgId: string): Promise<TaskRecord | null> {
-    const t = await this.db.task.findFirst({ where: { id, orgId, deletedAt: null } });
+    const t = await this.db.task.findFirst({ where: { id, orgId, deletedAt: null }, include: withExtras });
     return t ? toTask(t) : null;
   }
   async listByProject(projectId: string, orgId: string, f: TaskFilterOpts): Promise<TaskRecord[]> {
@@ -59,6 +71,7 @@ export class PrismaTaskRepo implements TaskRepo {
       where: { projectId, orgId, deletedAt: null, ...whereFilters(f) },
       orderBy: [{ position: "asc" }, { id: "asc" }],
       take: f.limit ?? 100,
+      include: withExtras,
     });
     return rows.map(toTask);
   }
@@ -67,6 +80,7 @@ export class PrismaTaskRepo implements TaskRepo {
       where: { engagementId, orgId, deletedAt: null, ...whereFilters(f) },
       orderBy: [{ position: "asc" }, { id: "asc" }],
       take: f.limit ?? 100,
+      include: withExtras,
     });
     return rows.map(toTask);
   }
@@ -81,11 +95,14 @@ export class PrismaTaskRepo implements TaskRepo {
         orgId,
         deletedAt: null,
         ...(projectIds === "all" ? {} : { projectId: { in: projectIds } }),
-        ...whereFilters(f),
-        assigneeId: userId, // pin por ÚLTIMO — filtro de query não sobrescreve o dono [SEC-502]
+        ...(f.status ? { status: f.status } : {}),
+        ...(f.priority ? { priority: f.priority } : {}),
+        // "minhas" = principal OU extra. AND separado do restante: nenhum filtro de query alarga o dono [SEC-502]
+        OR: [{ assigneeId: userId }, { extraAssignees: { some: { userId } } }],
       },
       orderBy: [{ dueDate: "asc" }, { id: "asc" }],
       take: f.limit ?? 100,
+      include: withExtras,
     });
     return rows.map(toTask);
   }
@@ -98,14 +115,14 @@ export class PrismaTaskRepo implements TaskRepo {
         status: patch.status,
         priority: patch.priority,
         dueDate: patch.dueDate,
-        assigneeId: patch.assigneeId,
         estimatedMinutes: patch.estimatedMinutes,
       },
+      include: withExtras,
     });
     return toTask(updated);
   }
   async move(id: string, status: TaskStatus, position: number): Promise<TaskRecord> {
-    const updated = await this.db.task.update({ where: { id }, data: { status, position } });
+    const updated = await this.db.task.update({ where: { id }, data: { status, position }, include: withExtras });
     return toTask(updated);
   }
   async softDelete(id: string): Promise<void> {
@@ -117,6 +134,47 @@ export class PrismaTaskRepo implements TaskRepo {
       _max: { position: true },
     });
     return agg._max.position ?? 0;
+  }
+
+  async addExtraAssignee(taskId: string, userId: string, orgId: string): Promise<void> {
+    // idempotente: se já existe, não duplica
+    await this.db.taskAssignee.upsert({
+      where: { taskId_userId: { taskId, userId } },
+      create: { taskId, userId, orgId },
+      update: {},
+    });
+  }
+  async removeExtraAssignee(taskId: string, userId: string, orgId: string): Promise<void> {
+    await this.db.taskAssignee.deleteMany({ where: { taskId, userId, orgId } });
+  }
+  async promoteToPrimary(taskId: string, userId: string, orgId: string): Promise<void> {
+    await this.db.$transaction(async (tx) => {
+      const task = await tx.task.findFirst({ where: { id: taskId, orgId }, select: { assigneeId: true } });
+      if (!task) return;
+      // userId sai dos extras
+      await tx.taskAssignee.deleteMany({ where: { taskId, userId, orgId } });
+      // principal atual (se houver e diferente) vira extra
+      if (task.assigneeId && task.assigneeId !== userId) {
+        await tx.taskAssignee.upsert({
+          where: { taskId_userId: { taskId, userId: task.assigneeId } },
+          create: { taskId, userId: task.assigneeId, orgId },
+          update: {},
+        });
+      }
+      await tx.task.updateMany({ where: { id: taskId, orgId }, data: { assigneeId: userId } });
+    });
+  }
+  async clearPrimaryPromotingOldest(taskId: string, orgId: string): Promise<void> {
+    await this.db.$transaction(async (tx) => {
+      const oldest = await tx.taskAssignee.findFirst({
+        where: { taskId, orgId },
+        orderBy: [{ createdAt: "asc" }, { userId: "asc" }],
+        select: { userId: true },
+      });
+      const newPrimary = oldest?.userId ?? null;
+      if (newPrimary) await tx.taskAssignee.deleteMany({ where: { taskId, userId: newPrimary, orgId } });
+      await tx.task.updateMany({ where: { id: taskId, orgId }, data: { assigneeId: newPrimary } });
+    });
   }
 }
 

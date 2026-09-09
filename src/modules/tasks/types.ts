@@ -10,7 +10,8 @@ export interface TaskRecord {
   status: TaskStatus;
   priority: TaskPriority;
   dueDate: Date | null;
-  assigneeId: string | null;
+  assigneeId: string | null; // responsável PRINCIPAL (autoritativo p/ custo/card) [detalhe-tarefa A1]
+  extraAssigneeIds: string[]; // responsáveis EXTRAS (task_assignees); NÃO inclui o principal
   estimatedMinutes: number | null;
   position: number;
   createdById: string;
@@ -40,7 +41,7 @@ export interface TaskPatch {
   status?: TaskStatus;
   priority?: TaskPriority;
   dueDate?: Date | null;
-  assigneeId?: string | null;
+  // assigneeId NÃO entra: o principal é gerido pelas rotas /assignees (promoteToPrimary/clear). [detalhe-tarefa A1]
   estimatedMinutes?: number | null;
 }
 
@@ -62,6 +63,13 @@ export interface TaskRepo {
   move(id: string, status: TaskStatus, position: number): Promise<TaskRecord>;
   softDelete(id: string): Promise<void>;
   maxPositionByEngagement(engagementId: string, status: TaskStatus): Promise<number>;
+  // responsáveis extras [detalhe-tarefa A1]. orgId sempre no WHERE (defense-in-depth cross-org) [SEC-A04]
+  addExtraAssignee(taskId: string, userId: string, orgId: string): Promise<void>;
+  removeExtraAssignee(taskId: string, userId: string, orgId: string): Promise<void>;
+  /** Torna userId o principal: o principal atual (se houver) vira extra; userId sai dos extras. Atômico. */
+  promoteToPrimary(taskId: string, userId: string, orgId: string): Promise<void>;
+  /** Remove o principal atual e promove o extra mais antigo (ou null se não houver). Atômico. */
+  clearPrimaryPromotingOldest(taskId: string, orgId: string): Promise<void>;
 }
 
 export interface SubtaskRecord {

@@ -47,6 +47,7 @@ model User {
   role          Role?           @relation(fields: [roleId], references: [id], onDelete: Restrict)
   refreshTokens RefreshToken[]
   assignedTasks Task[]          @relation("assignee")
+  extraAssignments TaskAssignee[]
   projectAccess ProjectMember[]
   engagementParticipation EngagementMember[]
 
@@ -181,14 +182,33 @@ model Task {
   // Pai real; a coerência engagement.projectId == task.projectId é garantida pela FK tripla no banco (SQL 006).
   engagement Engagement @relation(fields: [engagementId], references: [id])
   assignee   User?      @relation("assignee", fields: [assigneeId], references: [id])
+  extraAssignees TaskAssignee[]
   subtasks   Subtask[]
 
+  // habilita FKs compostas de tenant das tabelas-filhas (task_assignees etc.) [detalhe-tarefa A4]
+  @@unique([id, orgId])
   @@index([orgId])
   @@index([projectId, status, position])
   @@index([engagementId, status, position])
   @@index([assigneeId])
   @@index([dueDate])
   @@map("tasks")
+}
+
+// Responsáveis EXTRAS da tarefa (o principal fica em Task.assigneeId). [detalhe-tarefa A1]
+model TaskAssignee {
+  taskId    String
+  userId    String
+  orgId     String
+  createdAt DateTime @default(now())
+
+  // FK composta (task, org) garante coerência de tenant no banco — versionada aqui, não só no SQL 008. [SEC-A02]
+  task Task @relation(fields: [taskId, orgId], references: [id, orgId])
+  user User @relation(fields: [userId], references: [id])
+
+  @@id([taskId, userId])
+  @@index([userId])
+  @@map("task_assignees")
 }
 
 model Subtask {

@@ -14,12 +14,17 @@ function applyFilters(list: TaskRecord[], f: TaskFilterOpts): TaskRecord[] {
     (t) =>
       (!f.status || t.status === f.status) &&
       (!f.priority || t.priority === f.priority) &&
-      (!f.assigneeId || t.assigneeId === f.assigneeId),
+      // filtro por responsável casa principal OU extra [detalhe-tarefa RF-R9]
+      (!f.assigneeId || t.assigneeId === f.assigneeId || t.extraAssigneeIds.includes(f.assigneeId)),
   );
 }
 function sortAndPage(list: TaskRecord[], f: TaskFilterOpts): TaskRecord[] {
   const sorted = [...list].sort((a, b) => a.position - b.position || (a.id < b.id ? -1 : 1));
   return f.limit ? sorted.slice(0, f.limit) : sorted;
+}
+/** cópia defensiva incluindo o array de extras (evita aliasing entre chamadas). */
+function clone(t: TaskRecord): TaskRecord {
+  return { ...t, extraAssigneeIds: [...t.extraAssigneeIds] };
 }
 
 export class InMemoryTaskRepo implements TaskRepo {
@@ -38,6 +43,7 @@ export class InMemoryTaskRepo implements TaskRepo {
       priority: t.priority,
       dueDate: t.dueDate ?? null,
       assigneeId: t.assigneeId ?? null,
+      extraAssigneeIds: [],
       estimatedMinutes: t.estimatedMinutes ?? null,
       position: t.position,
       createdById: t.createdById,
@@ -46,23 +52,23 @@ export class InMemoryTaskRepo implements TaskRepo {
       updatedAt: now,
     };
     this.byId.set(rec.id, rec);
-    return { ...rec };
+    return clone(rec);
   }
   async findById(id: string, orgId: string): Promise<TaskRecord | null> {
     const t = this.byId.get(id);
-    return t && t.orgId === orgId && !t.deletedAt ? { ...t } : null;
+    return t && t.orgId === orgId && !t.deletedAt ? clone(t) : null;
   }
   async listByProject(projectId: string, orgId: string, f: TaskFilterOpts): Promise<TaskRecord[]> {
     const list = [...this.byId.values()].filter(
       (t) => t.projectId === projectId && t.orgId === orgId && !t.deletedAt,
     );
-    return sortAndPage(applyFilters(list, f), f).map((t) => ({ ...t }));
+    return sortAndPage(applyFilters(list, f), f).map(clone);
   }
   async listByEngagement(engagementId: string, orgId: string, f: TaskFilterOpts): Promise<TaskRecord[]> {
     const list = [...this.byId.values()].filter(
       (t) => t.engagementId === engagementId && t.orgId === orgId && !t.deletedAt,
     );
-    return sortAndPage(applyFilters(list, f), f).map((t) => ({ ...t }));
+    return sortAndPage(applyFilters(list, f), f).map(clone);
   }
   async listMine(
     userId: string,
@@ -70,14 +76,16 @@ export class InMemoryTaskRepo implements TaskRepo {
     orgId: string,
     f: TaskFilterOpts,
   ): Promise<TaskRecord[]> {
+    // "minhas" = principal OU extra [detalhe-tarefa RF-R9]; ignora f.assigneeId (é a lista do próprio) [SEC-502]
+    const mineFilter: TaskFilterOpts = { status: f.status, priority: f.priority, limit: f.limit };
     const list = [...this.byId.values()].filter(
       (t) =>
         t.orgId === orgId &&
         !t.deletedAt &&
-        t.assigneeId === userId &&
+        (t.assigneeId === userId || t.extraAssigneeIds.includes(userId)) &&
         (projectIds === "all" || projectIds.includes(t.projectId)),
     );
-    return sortAndPage(applyFilters(list, f), f).map((t) => ({ ...t }));
+    return sortAndPage(applyFilters(list, mineFilter), mineFilter).map(clone);
   }
   async update(id: string, patch: TaskPatch): Promise<TaskRecord> {
     const t = this.byId.get(id);
@@ -87,10 +95,9 @@ export class InMemoryTaskRepo implements TaskRepo {
     if (patch.status !== undefined) t.status = patch.status;
     if (patch.priority !== undefined) t.priority = patch.priority;
     if (patch.dueDate !== undefined) t.dueDate = patch.dueDate;
-    if (patch.assigneeId !== undefined) t.assigneeId = patch.assigneeId;
     if (patch.estimatedMinutes !== undefined) t.estimatedMinutes = patch.estimatedMinutes;
     t.updatedAt = new Date();
-    return { ...t };
+    return clone(t);
   }
   async move(id: string, status: TaskRecord["status"], position: number): Promise<TaskRecord> {
     const t = this.byId.get(id);
@@ -98,7 +105,7 @@ export class InMemoryTaskRepo implements TaskRepo {
     t.status = status;
     t.position = position;
     t.updatedAt = new Date();
-    return { ...t };
+    return clone(t);
   }
   async softDelete(id: string): Promise<void> {
     const t = this.byId.get(id);
@@ -109,6 +116,37 @@ export class InMemoryTaskRepo implements TaskRepo {
       .filter((t) => t.engagementId === engagementId && t.status === status && !t.deletedAt)
       .map((t) => t.position);
     return ps.length ? Math.max(...ps) : 0;
+  }
+
+  private get(taskId: string, orgId: string): TaskRecord | undefined {
+    const t = this.byId.get(taskId);
+    return t && t.orgId === orgId ? t : undefined; // orgId sempre no "WHERE" [SEC-A04]
+  }
+  async addExtraAssignee(taskId: string, userId: string, orgId: string): Promise<void> {
+    const t = this.get(taskId, orgId);
+    if (t && !t.extraAssigneeIds.includes(userId)) t.extraAssigneeIds.push(userId); // ordem = createdAt
+  }
+  async removeExtraAssignee(taskId: string, userId: string, orgId: string): Promise<void> {
+    const t = this.get(taskId, orgId);
+    if (t) t.extraAssigneeIds = t.extraAssigneeIds.filter((u) => u !== userId);
+  }
+  async promoteToPrimary(taskId: string, userId: string, orgId: string): Promise<void> {
+    const t = this.get(taskId, orgId);
+    if (!t) return;
+    t.extraAssigneeIds = t.extraAssigneeIds.filter((u) => u !== userId);
+    if (t.assigneeId && t.assigneeId !== userId && !t.extraAssigneeIds.includes(t.assigneeId)) {
+      t.extraAssigneeIds.push(t.assigneeId);
+    }
+    t.assigneeId = userId;
+    t.updatedAt = new Date();
+  }
+  async clearPrimaryPromotingOldest(taskId: string, orgId: string): Promise<void> {
+    const t = this.get(taskId, orgId);
+    if (!t) return;
+    const next = t.extraAssigneeIds[0] ?? null; // mais antigo = primeiro inserido
+    if (next) t.extraAssigneeIds = t.extraAssigneeIds.filter((u) => u !== next);
+    t.assigneeId = next;
+    t.updatedAt = new Date();
   }
 }
 

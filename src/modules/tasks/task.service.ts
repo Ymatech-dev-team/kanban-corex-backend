@@ -79,16 +79,12 @@ export class TaskService {
     if (ifUnmodifiedSince && task.updatedAt.toISOString() !== ifUnmodifiedSince) {
       throw new AppError("CONFLITO", "A tarefa foi alterada por outra pessoa. Recarregue.");
     }
-    if (patch.assigneeId !== undefined) {
-      await this.assertAssigneeAccess(patch.assigneeId, task.projectId);
-    }
     const data: TaskPatch = {
       title: patch.title,
       description: patch.description,
       status: patch.status,
       priority: patch.priority,
       dueDate: patch.dueDate === undefined ? undefined : patch.dueDate ? new Date(patch.dueDate) : null,
-      assigneeId: patch.assigneeId,
       estimatedMinutes: patch.estimatedMinutes,
     };
     return this.tasks.update(task.id, data);
@@ -112,6 +108,40 @@ export class TaskService {
 
   async softDelete(id: string): Promise<void> {
     await this.tasks.softDelete(id);
+  }
+
+  // ---- responsáveis (principal em Task.assigneeId + extras) [detalhe-tarefa A1] ----
+
+  /** Adiciona responsável. Se a tarefa ainda não tem principal, o primeiro adicionado vira principal. */
+  async addAssignee(session: SessionContext, task: TaskRecord, userId: string): Promise<TaskRecord> {
+    await this.assertAssigneeAccess(userId, task.projectId);
+    if (task.assigneeId === userId) {
+      throw new AppError("VALIDACAO", "Essa pessoa já é a responsável principal");
+    }
+    if (task.assigneeId == null) {
+      await this.tasks.promoteToPrimary(task.id, userId, task.orgId); // primeiro responsável = principal (custo/card)
+    } else {
+      await this.tasks.addExtraAssignee(task.id, userId, task.orgId);
+    }
+    return this.getOrThrow(session, task.id);
+  }
+
+  /** Remove um responsável. Se for o principal, promove o extra mais antigo (ou fica sem responsável). */
+  async removeAssignee(session: SessionContext, task: TaskRecord, userId: string): Promise<TaskRecord> {
+    if (task.assigneeId === userId) {
+      await this.tasks.clearPrimaryPromotingOldest(task.id, task.orgId);
+    } else {
+      await this.tasks.removeExtraAssignee(task.id, userId, task.orgId);
+    }
+    return this.getOrThrow(session, task.id);
+  }
+
+  /** Torna um responsável (existente ou novo com acesso) o principal — o principal atual vira extra. */
+  async setPrimaryAssignee(session: SessionContext, task: TaskRecord, userId: string): Promise<TaskRecord> {
+    if (task.assigneeId === userId) return task;
+    await this.assertAssigneeAccess(userId, task.projectId);
+    await this.tasks.promoteToPrimary(task.id, userId, task.orgId);
+    return this.getOrThrow(session, task.id);
   }
 
   async listByProject(orgId: string, projectId: string, filters: TaskFilterOpts): Promise<{ tasks: TaskRecord[] }> {

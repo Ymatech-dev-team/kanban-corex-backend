@@ -89,7 +89,25 @@ export class PrismaProjectAccessRepo implements ProjectAccessRepo {
     return rows.map((r) => ({ id: r.user.id, name: r.user.name }));
   }
   async nullAssigneesInProject(projectId: string, userId: string): Promise<void> {
-    await this.db.task.updateMany({ where: { projectId, assigneeId: userId }, data: { assigneeId: null } });
+    // Revogar acesso: o usuário sai como responsável (principal E extra) de todas as tarefas do cliente.
+    // Onde era o PRINCIPAL, promove o extra mais antigo remanescente (senão a tarefa ficaria órfã com
+    // extras ativos → custo falso "sem responsável" e invariante A1 quebrada). Tudo na mesma transação. [SEC-107/110, review C2]
+    await this.db.$transaction(async (tx) => {
+      // 1) remove as linhas de extra do usuário revogado nas tarefas deste cliente
+      await tx.taskAssignee.deleteMany({ where: { userId, task: { projectId } } });
+      // 2) tarefas em que ele era o principal → promove o extra mais antigo (ou null)
+      const affected = await tx.task.findMany({ where: { projectId, assigneeId: userId }, select: { id: true } });
+      for (const t of affected) {
+        const oldest = await tx.taskAssignee.findFirst({
+          where: { taskId: t.id },
+          orderBy: [{ createdAt: "asc" }, { userId: "asc" }],
+          select: { userId: true },
+        });
+        const next = oldest?.userId ?? null;
+        if (next) await tx.taskAssignee.deleteMany({ where: { taskId: t.id, userId: next } });
+        await tx.task.update({ where: { id: t.id }, data: { assigneeId: next } });
+      }
+    });
   }
   async userExistsInOrg(userId: string, orgId: string): Promise<boolean> {
     const u = await this.db.user.findFirst({ where: { id: userId, orgId, deletedAt: null } });
