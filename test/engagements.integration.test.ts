@@ -30,6 +30,7 @@ beforeAll(async () => {
   const engPerms = [
     PERMISSIONS.engagements_criar, PERMISSIONS.engagements_editar,
     PERMISSIONS.engagements_excluir, PERMISSIONS.engagements_consultores, PERMISSIONS.custos_ver,
+    PERMISSIONS.tarefas_criar,
   ];
   const users = new InMemoryAuthzUserRepo()
     .add({ id: "boss", orgId: "o1", deletedAt: null, tokenVersion: 0, mustChangePassword: false, rolePermissions: engPerms, extraPermissions: [] })
@@ -135,5 +136,21 @@ describe("projetos (engagements)", () => {
     const res = await call("GET", `/engagements/gen-${P}/cost`, "boss");
     expect(res.statusCode).toBe(200);
     expect(res.json().realizadoCents).toBe(4000); // 60min @ R$40/h, DONE
+  });
+
+  it("estimatedMinutes no endpoint por engagement é gated por custos.ver [SEC-custo]", async () => {
+    // boss (custos.ver) cria tarefa no projeto geral com horas
+    const created = await call("POST", `/engagements/gen-${P}/tasks`, "boss", { title: "com horas", estimatedMinutes: 90 });
+    expect(created.statusCode).toBe(200);
+    expect(created.json().estimatedMinutes).toBe(90);
+    const id = created.json().id;
+    type Row = { id: string; estimatedMinutes: number | null };
+    // worker: acesso ao cliente, SEM custos.ver → estimatedMinutes redigido a null na LISTA
+    const listed = await call("GET", `/engagements/gen-${P}/tasks`, "worker");
+    expect(listed.statusCode).toBe(200);
+    expect(listed.json().tasks.find((x: Row) => x.id === id).estimatedMinutes).toBeNull();
+    // boss (com custos.ver) → vê o valor real
+    const bossList = await call("GET", `/engagements/gen-${P}/tasks`, "boss");
+    expect(bossList.json().tasks.find((x: Row) => x.id === id).estimatedMinutes).toBe(90);
   });
 });

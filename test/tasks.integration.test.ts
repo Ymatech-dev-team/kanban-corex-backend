@@ -28,9 +28,13 @@ beforeAll(async () => {
     .add({ id: "u1", orgId: "o1", deletedAt: null, tokenVersion: 0, mustChangePassword: false,
       rolePermissions: [PERMISSIONS.tarefas_criar, PERMISSIONS.tarefas_editar, PERMISSIONS.tarefas_mover, PERMISSIONS.tarefas_excluir, PERMISSIONS.subtarefas_gerenciar], extraPermissions: [] })
     .add({ id: "u2", orgId: "o1", deletedAt: null, tokenVersion: 0, mustChangePassword: false,
-      rolePermissions: [PERMISSIONS.tarefas_mover, PERMISSIONS.tarefas_criar], extraPermissions: [] });
-  access = new InMemoryProjectAccessRepo().addUser("u1", "o1").addUser("u2", "o1");
+      rolePermissions: [PERMISSIONS.tarefas_mover, PERMISSIONS.tarefas_criar], extraPermissions: [] })
+    // editor COM custos.ver — pode ver/setar estimatedMinutes (insumo de custo)
+    .add({ id: "boss", orgId: "o1", deletedAt: null, tokenVersion: 0, mustChangePassword: false,
+      rolePermissions: [PERMISSIONS.tarefas_criar, PERMISSIONS.tarefas_editar, PERMISSIONS.custos_ver], extraPermissions: [] });
+  access = new InMemoryProjectAccessRepo().addUser("u1", "o1").addUser("u2", "o1").addUser("boss", "o1");
   access.grant(P, "u1");
+  access.grant(P, "boss");
   const taskService = new TaskService(new InMemoryTaskRepo(), new InMemorySubtaskRepo(), access, new InMemoryIdempotencyStore());
   app = buildApp({
     authenticate: makeAuthenticate({ tokens, users }),
@@ -83,13 +87,33 @@ describe("tarefas (5b)", () => {
     expect(res.json().priority).toBe("HIGH");
   });
 
-  it("u1 define e edita horas estimadas (estimatedMinutes)", async () => {
+  it("estimatedMinutes gated por custos.ver: editor SEM o direito não seta nem enxerga [SEC-custo]", async () => {
+    // u1 (sem custos.ver) tenta criar com horas → backend ignora, devolve null (não seta nem vaza)
     const created = await call("POST", `/projects/${P}/tasks`, "u1", { title: "Com horas", estimatedMinutes: 90 });
     expect(created.statusCode).toBe(200);
-    expect(created.json().estimatedMinutes).toBe(90);
+    expect(created.json().estimatedMinutes).toBeNull();
     const patched = await call("PATCH", `/tasks/${created.json().id}`, "u1", { estimatedMinutes: 120 });
     expect(patched.statusCode).toBe(200);
+    expect(patched.json().estimatedMinutes).toBeNull();
+  });
+
+  it("com custos.ver define/edita horas; sem o direito o campo é redigido a null e não é apagado [SEC-custo]", async () => {
+    const created = await call("POST", `/projects/${P}/tasks`, "boss", { title: "Com horas c", estimatedMinutes: 90 });
+    expect(created.statusCode).toBe(200);
+    const id = created.json().id;
+    expect(created.json().estimatedMinutes).toBe(90);
+    const patched = await call("PATCH", `/tasks/${id}`, "boss", { estimatedMinutes: 120 });
     expect(patched.json().estimatedMinutes).toBe(120);
+    // u1 (sem custos.ver) abre a MESMA tarefa → estimatedMinutes redigido a null
+    const asWorker = await call("GET", `/tasks/${id}`, "u1");
+    expect(asWorker.statusCode).toBe(200);
+    expect(asWorker.json().estimatedMinutes).toBeNull();
+    // boss continua vendo o valor real
+    expect((await call("GET", `/tasks/${id}`, "boss")).json().estimatedMinutes).toBe(120);
+    // u1 editando o TÍTULO não apaga as horas do outro (patch sem o campo preserva)
+    const editTitle = await call("PATCH", `/tasks/${id}`, "u1", { title: "novo titulo" });
+    expect(editTitle.statusCode).toBe(200);
+    expect((await call("GET", `/tasks/${id}`, "boss")).json().estimatedMinutes).toBe(120);
   });
 
   it("edição com If-Unmodified-Since velho → 409 (conflito)", async () => {

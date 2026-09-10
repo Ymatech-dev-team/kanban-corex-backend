@@ -6,6 +6,7 @@ import type { Authenticate } from "../authz/authenticate.js";
 import { Authorizer } from "../authz/authorizer.js";
 import { EngagementService } from "./engagement.service.js";
 import { TaskService } from "../tasks/task.service.js";
+import { redactCost } from "../tasks/redact.js";
 import { CostService } from "../cost/cost.service.js";
 
 const clientParams = z.object({ id: z.string().min(1) });
@@ -109,7 +110,9 @@ export function makeEngagementRoutes(
       async (req) => {
         const eng = await engagements.getOrThrow(req.session!, req.params.id);
         await authz.assertProjectAccess(req.session!, eng.projectId);
-        return tasks.listByEngagement(req.session!.orgId, eng.id, req.query);
+        const cost = await authz.can(req.session!, PERMISSIONS.custos_ver, eng.projectId);
+        const { tasks: rows } = await tasks.listByEngagement(req.session!.orgId, eng.id, req.query);
+        return { tasks: rows.map((t) => redactCost(t, cost)) };
       },
     );
 
@@ -119,7 +122,10 @@ export function makeEngagementRoutes(
       async (req) => {
         const eng = await engagements.getOrThrow(req.session!, req.params.id);
         await authz.assertCan(req.session!, PERMISSIONS.tarefas_criar, eng.projectId);
-        return tasks.create(req.session!, eng.projectId, req.body, header(req, "idempotency-key"), eng.id);
+        const cost = await authz.can(req.session!, PERMISSIONS.custos_ver, eng.projectId);
+        const input = cost ? req.body : { ...req.body, estimatedMinutes: undefined };
+        const created = await tasks.create(req.session!, eng.projectId, input, header(req, "idempotency-key"), eng.id);
+        return redactCost(created, cost);
       },
     );
 

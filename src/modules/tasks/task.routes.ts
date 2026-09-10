@@ -18,6 +18,7 @@ import type { Authenticate } from "../authz/authenticate.js";
 import { Authorizer } from "../authz/authorizer.js";
 import { AppError } from "../../lib/errors.js";
 import { TaskService } from "./task.service.js";
+import { redactCost, redactCostList } from "./redact.js";
 import type { TaskRecord } from "./types.js";
 
 const projectParams = z.object({ projectId: z.string().min(1) });
@@ -32,12 +33,19 @@ export function makeTaskRoutes(authenticate: Authenticate, authz: Authorizer, se
   return async function taskRoutes(app: FastifyInstance): Promise<void> {
     const r = app.withTypeProvider<ZodTypeProvider>();
 
+    /** custos.ver no cliente — gate de exposição/escrita do estimatedMinutes. [SEC-custo] */
+    const canSeeCost = (req: FastifyRequest, projectId: string) =>
+      authz.can(req.session!, PERMISSIONS.custos_ver, projectId);
+
     r.post(
       "/projects/:projectId/tasks",
       { preHandler: authenticate, schema: { params: projectParams, body: createTaskSchema } },
       async (req) => {
         await authz.assertCan(req.session!, PERMISSIONS.tarefas_criar, req.params.projectId);
-        return service.create(req.session!, req.params.projectId, req.body, header(req, "idempotency-key"));
+        const cost = await canSeeCost(req, req.params.projectId);
+        const input = cost ? req.body : { ...req.body, estimatedMinutes: undefined }; // não deixa setar custo sem direito
+        const created = await service.create(req.session!, req.params.projectId, input, header(req, "idempotency-key"));
+        return redactCost(created, cost);
       },
     );
 
@@ -46,19 +54,23 @@ export function makeTaskRoutes(authenticate: Authenticate, authz: Authorizer, se
       { preHandler: authenticate, schema: { params: projectParams, querystring: taskFiltersSchema } },
       async (req) => {
         await authz.assertProjectAccess(req.session!, req.params.projectId);
-        return service.listByProject(req.session!.orgId, req.params.projectId, req.query);
+        const cost = await canSeeCost(req, req.params.projectId);
+        const { tasks } = await service.listByProject(req.session!.orgId, req.params.projectId, req.query);
+        return { tasks: tasks.map((t) => redactCost(t, cost)) };
       },
     );
 
     // rota estática ANTES da param (find-my-way prioriza estática, mas deixamos explícito)
     r.get("/tasks/mine", { preHandler: authenticate, schema: { querystring: taskFiltersSchema } }, async (req) => {
-      return service.listMine(req.session!, req.query);
+      const { tasks } = await service.listMine(req.session!, req.query);
+      return { tasks: await redactCostList(tasks, req.session!, authz) }; // cruza clientes → custos.ver por projeto
     });
 
     r.get("/tasks/:id", { preHandler: authenticate, schema: { params: idParams } }, async (req) => {
       const task = await service.getOrThrow(req.session!, req.params.id);
       await authz.assertProjectAccess(req.session!, task.projectId);
-      return { ...task, subtasks: await service.listSubtasks(task.id) };
+      const cost = await canSeeCost(req, task.projectId);
+      return redactCost({ ...task, subtasks: await service.listSubtasks(task.id) }, cost);
     });
 
     r.get(
@@ -122,7 +134,11 @@ export function makeTaskRoutes(authenticate: Authenticate, authz: Authorizer, se
       async (req) => {
         const task = await service.getOrThrow(req.session!, req.params.id);
         await authz.assertCan(req.session!, PERMISSIONS.tarefas_editar, task.projectId);
-        return service.update(req.session!, task, req.body, header(req, "if-unmodified-since"));
+        const cost = await canSeeCost(req, task.projectId);
+        // sem custos.ver: ignora estimatedMinutes (undefined = Prisma não toca) — não seta NEM apaga
+        const patch = cost ? req.body : { ...req.body, estimatedMinutes: undefined };
+        const updated = await service.update(req.session!, task, patch, header(req, "if-unmodified-since"));
+        return redactCost(updated, cost);
       },
     );
 
@@ -130,7 +146,8 @@ export function makeTaskRoutes(authenticate: Authenticate, authz: Authorizer, se
       "/tasks/:id/move",
       { preHandler: authenticate, schema: { params: idParams, body: moveTaskSchema } },
       async (req) => {
-        return service.move(req.session!, req.params.id, req.body.status, req.body.position);
+        const moved = await service.move(req.session!, req.params.id, req.body.status, req.body.position);
+        return redactCost(moved, await canSeeCost(req, moved.projectId));
       },
     );
 
@@ -149,7 +166,8 @@ export function makeTaskRoutes(authenticate: Authenticate, authz: Authorizer, se
       async (req) => {
         const task = await service.getOrThrow(req.session!, req.params.id);
         await authz.assertCan(req.session!, PERMISSIONS.tarefas_editar, task.projectId);
-        return service.addAssignee(req.session!, task, req.body.userId);
+        const updated = await service.addAssignee(req.session!, task, req.body.userId);
+        return redactCost(updated, await canSeeCost(req, task.projectId));
       },
     );
 
@@ -159,7 +177,8 @@ export function makeTaskRoutes(authenticate: Authenticate, authz: Authorizer, se
       async (req) => {
         const task = await service.getOrThrow(req.session!, req.params.id);
         await authz.assertCan(req.session!, PERMISSIONS.tarefas_editar, task.projectId);
-        return service.setPrimaryAssignee(req.session!, task, req.params.userId);
+        const updated = await service.setPrimaryAssignee(req.session!, task, req.params.userId);
+        return redactCost(updated, await canSeeCost(req, task.projectId));
       },
     );
 
@@ -169,7 +188,8 @@ export function makeTaskRoutes(authenticate: Authenticate, authz: Authorizer, se
       async (req) => {
         const task = await service.getOrThrow(req.session!, req.params.id);
         await authz.assertCan(req.session!, PERMISSIONS.tarefas_editar, task.projectId);
-        return service.removeAssignee(req.session!, task, req.params.userId);
+        const updated = await service.removeAssignee(req.session!, task, req.params.userId);
+        return redactCost(updated, await canSeeCost(req, task.projectId));
       },
     );
 
