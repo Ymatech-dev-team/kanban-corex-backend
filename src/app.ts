@@ -25,7 +25,7 @@ import { ProjectService } from "./modules/projects/project.service.js";
 import { PrismaProjectRepo, PrismaProjectAccessRepo } from "./modules/projects/prisma-repos.js";
 import { makeProjectRoutes } from "./modules/projects/project.routes.js";
 import { TaskService } from "./modules/tasks/task.service.js";
-import { PrismaTaskRepo, PrismaSubtaskRepo } from "./modules/tasks/prisma-repos.js";
+import { PrismaTaskRepo, PrismaSubtaskRepo, PrismaActivityRepo } from "./modules/tasks/prisma-repos.js";
 import { makeTaskRoutes } from "./modules/tasks/task.routes.js";
 import { PrismaIdempotencyStore } from "./lib/idempotency-store.js";
 import { MemberService } from "./modules/admin/member.service.js";
@@ -147,6 +147,7 @@ export function buildApp(deps: AppDeps = {}): FastifyInstance {
         new PrismaSubtaskRepo(db),
         accessRepo,
         new PrismaIdempotencyStore(db),
+        new PrismaActivityRepo(db),
       );
     const memberRepo = new PrismaMemberRepo(db);
     memberService =

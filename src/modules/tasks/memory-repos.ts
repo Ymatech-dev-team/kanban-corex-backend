@@ -1,5 +1,9 @@
 import { randomUUID } from "node:crypto";
 import type {
+  ActivityPage,
+  ActivityRecord,
+  ActivityRepo,
+  NewActivity,
   NewTask,
   SubtaskRecord,
   SubtaskRepo,
@@ -147,6 +151,43 @@ export class InMemoryTaskRepo implements TaskRepo {
     if (next) t.extraAssigneeIds = t.extraAssigneeIds.filter((u) => u !== next);
     t.assigneeId = next;
     t.updatedAt = new Date();
+  }
+}
+
+export class InMemoryActivityRepo implements ActivityRepo {
+  private items: Array<ActivityRecord & { seq: number }> = [];
+  private names = new Map<string, string>();
+  private counter = 0;
+
+  /** registra nome pra snapshot nos testes (opcional). */
+  setName(userId: string, name: string): this {
+    this.names.set(userId, name);
+    return this;
+  }
+
+  async record(a: NewActivity): Promise<void> {
+    this.items.push({
+      id: randomUUID(),
+      taskId: a.taskId,
+      actorId: a.actorId,
+      actorName: this.names.get(a.actorId) ?? a.actorId,
+      type: a.type,
+      payload: a.payload,
+      createdAt: new Date(),
+      seq: this.counter++, // desempate determinístico por ordem de inserção (mesmo ms)
+    });
+  }
+
+  async listByTask(taskId: string, _orgId: string, opts: { limit: number; cursor?: string }): Promise<ActivityPage> {
+    const all = this.items
+      .filter((i) => i.taskId === taskId)
+      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime() || b.seq - a.seq); // mais recente primeiro
+    const start = opts.cursor ? all.findIndex((i) => i.id === opts.cursor) + 1 : 0;
+    const page = all.slice(start, start + opts.limit);
+    const nextIndex = start + opts.limit;
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const items = page.map(({ seq: _seq, ...rest }) => rest);
+    return { items, nextCursor: nextIndex < all.length ? page[page.length - 1].id : null };
   }
 }
 

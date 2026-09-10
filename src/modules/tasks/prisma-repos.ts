@@ -1,6 +1,10 @@
 import type { PrismaClient, Prisma } from "@prisma/client";
 import type { TaskStatus, TaskPriority } from "@sistema-tasks/contracts";
 import type {
+  ActivityPage,
+  ActivityRecord,
+  ActivityRepo,
+  NewActivity,
   NewTask,
   SubtaskRecord,
   SubtaskRepo,
@@ -9,6 +13,18 @@ import type {
   TaskRecord,
   TaskRepo,
 } from "./types.js";
+
+/** cursor opaco do feed: "<createdAt ISO>|<id>". */
+function encodeCursor(a: { createdAt: Date; id: string }): string {
+  return `${a.createdAt.toISOString()}|${a.id}`;
+}
+function decodeCursor(c: string): { createdAt: Date; id: string } | null {
+  const i = c.lastIndexOf("|");
+  if (i < 0) return null;
+  const d = new Date(c.slice(0, i));
+  const id = c.slice(i + 1);
+  return Number.isNaN(d.getTime()) || !id ? null : { createdAt: d, id };
+}
 
 type PrismaTask = {
   id: string; orgId: string; projectId: string; engagementId: string; title: string; description: string | null;
@@ -175,6 +191,62 @@ export class PrismaTaskRepo implements TaskRepo {
       if (newPrimary) await tx.taskAssignee.deleteMany({ where: { taskId, userId: newPrimary, orgId } });
       await tx.task.updateMany({ where: { id: taskId, orgId }, data: { assigneeId: newPrimary } });
     });
+  }
+}
+
+type PrismaActivity = {
+  id: string; taskId: string; actorId: string; actorName: string; type: string;
+  payload: unknown; createdAt: Date;
+};
+function toActivity(a: PrismaActivity): ActivityRecord {
+  return {
+    id: a.id, taskId: a.taskId, actorId: a.actorId, actorName: a.actorName, type: a.type,
+    payload: (a.payload ?? {}) as Record<string, unknown>, createdAt: a.createdAt,
+  };
+}
+
+export class PrismaActivityRepo implements ActivityRepo {
+  constructor(private readonly db: PrismaClient) {}
+
+  async record(a: NewActivity): Promise<void> {
+    // snapshot do nome do ator (sobrevive a remoção/renome do usuário). [detalhe-tarefa RF-A4]
+    const u = await this.db.user.findUnique({ where: { id: a.actorId }, select: { name: true } });
+    await this.db.taskActivity.create({
+      data: {
+        taskId: a.taskId,
+        orgId: a.orgId,
+        actorId: a.actorId,
+        actorName: u?.name ?? a.actorId,
+        type: a.type,
+        payload: a.payload as Prisma.InputJsonValue,
+      },
+    });
+  }
+
+  async listByTask(taskId: string, orgId: string, opts: { limit: number; cursor?: string }): Promise<ActivityPage> {
+    const cur = opts.cursor ? decodeCursor(opts.cursor) : null;
+    const rows = await this.db.taskActivity.findMany({
+      where: {
+        taskId,
+        orgId, // orgId no WHERE — defense-in-depth cross-org [SEC-102]
+        ...(cur
+          ? {
+              OR: [
+                { createdAt: { lt: cur.createdAt } },
+                { createdAt: cur.createdAt, id: { lt: cur.id } },
+              ],
+            }
+          : {}),
+      },
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      take: opts.limit + 1, // +1 pra saber se há próxima página
+    });
+    const hasMore = rows.length > opts.limit;
+    const page = hasMore ? rows.slice(0, opts.limit) : rows;
+    return {
+      items: page.map(toActivity),
+      nextCursor: hasMore ? encodeCursor(page[page.length - 1]) : null,
+    };
   }
 }
 

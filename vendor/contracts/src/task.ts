@@ -44,9 +44,34 @@ export type TaskFilters = z.infer<typeof taskFiltersSchema>;
 
 /** Adicionar um responsável EXTRA à tarefa (o principal fica em Task.assigneeId). [hierarquia/detalhe-tarefa A1] */
 export const addAssigneeSchema = z.object({
-  userId: z.string().min(1),
+  userId: z.string().min(1).max(64),
 });
 export type AddAssigneeInput = z.infer<typeof addAssigneeSchema>;
+
+/** Tipos de evento da linha do tempo (gerados pelo servidor, append-only). [detalhe-tarefa B] */
+export const TASK_ACTIVITY_TYPES = [
+  "CREATED",
+  "STATUS_CHANGED",
+  "FIELD_EDITED",
+  "ASSIGNEE_ADDED",
+  "ASSIGNEE_REMOVED",
+  "PRIMARY_CHANGED",
+  "SUBTASK_ADDED",
+  "SUBTASK_DONE",
+  "SUBTASK_REMOVED",
+] as const;
+export type TaskActivityType = (typeof TASK_ACTIVITY_TYPES)[number];
+
+/** Campos de tarefa cuja edição pode ser registrada (allowlist não-sensível — nunca custo/horas). [SEC-S3] */
+export const AUDITABLE_FIELDS = ["title", "description", "priority", "dueDate"] as const;
+export type AuditableField = (typeof AUDITABLE_FIELDS)[number];
+
+/** Paginação keyset da timeline (mais recente primeiro). */
+export const activityFiltersSchema = z.object({
+  limit: z.coerce.number().int().min(1).max(50).optional(),
+  cursor: z.string().optional(),
+});
+export type ActivityFilters = z.infer<typeof activityFiltersSchema>;
 
 export const createSubtaskSchema = z.object({
   title: z.string().trim().min(1).max(200),

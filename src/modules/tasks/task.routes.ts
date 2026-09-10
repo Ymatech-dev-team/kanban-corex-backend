@@ -9,6 +9,7 @@ import {
   createSubtaskSchema,
   updateSubtaskSchema,
   addAssigneeSchema,
+  activityFiltersSchema,
   PERMISSIONS,
 } from "@sistema-tasks/contracts";
 import type { Authenticate } from "../authz/authenticate.js";
@@ -56,6 +57,16 @@ export function makeTaskRoutes(authenticate: Authenticate, authz: Authorizer, se
       return { ...task, subtasks: await service.listSubtasks(task.id) };
     });
 
+    r.get(
+      "/tasks/:id/activity",
+      { preHandler: authenticate, schema: { params: idParams, querystring: activityFiltersSchema } },
+      async (req) => {
+        const task = await service.getOrThrow(req.session!, req.params.id);
+        await authz.assertProjectAccess(req.session!, task.projectId);
+        return service.listActivity(task.id, req.session!.orgId, req.query);
+      },
+    );
+
     r.patch(
       "/tasks/:id",
       { preHandler: authenticate, schema: { params: idParams, body: updateTaskSchema } },
@@ -81,7 +92,7 @@ export function makeTaskRoutes(authenticate: Authenticate, authz: Authorizer, se
       return { ok: true };
     });
 
-    const assigneeParams = z.object({ id: z.string().min(1), userId: z.string().min(1) });
+    const assigneeParams = z.object({ id: z.string().min(1).max(64), userId: z.string().min(1).max(64) });
 
     r.post(
       "/tasks/:id/assignees",
@@ -119,7 +130,7 @@ export function makeTaskRoutes(authenticate: Authenticate, authz: Authorizer, se
       async (req) => {
         const task = await service.getOrThrow(req.session!, req.params.id);
         await authz.assertCan(req.session!, PERMISSIONS.subtarefas_gerenciar, task.projectId);
-        return service.addSubtask(req.session!, task.id, req.body.title, header(req, "idempotency-key"));
+        return service.addSubtask(req.session!, task, req.body.title, header(req, "idempotency-key"));
       },
     );
 
@@ -129,14 +140,14 @@ export function makeTaskRoutes(authenticate: Authenticate, authz: Authorizer, se
       async (req) => {
         const task = await service.getTaskOfSubtaskOrThrow(req.session!, req.params.id);
         await authz.assertCan(req.session!, PERMISSIONS.subtarefas_gerenciar, task.projectId);
-        return service.updateSubtask(req.params.id, req.body);
+        return service.updateSubtask(req.session!, task, req.params.id, req.body);
       },
     );
 
     r.delete("/subtasks/:id", { preHandler: authenticate, schema: { params: idParams } }, async (req) => {
       const task = await service.getTaskOfSubtaskOrThrow(req.session!, req.params.id);
       await authz.assertCan(req.session!, PERMISSIONS.subtarefas_gerenciar, task.projectId);
-      await service.removeSubtask(req.params.id);
+      await service.removeSubtask(req.session!, task, req.params.id);
       return { ok: true };
     });
   };

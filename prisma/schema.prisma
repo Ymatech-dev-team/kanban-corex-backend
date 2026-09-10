@@ -183,6 +183,7 @@ model Task {
   engagement Engagement @relation(fields: [engagementId], references: [id])
   assignee   User?      @relation("assignee", fields: [assigneeId], references: [id])
   extraAssignees TaskAssignee[]
+  activity   TaskActivity[]
   subtasks   Subtask[]
 
   // habilita FKs compostas de tenant das tabelas-filhas (task_assignees etc.) [detalhe-tarefa A4]
@@ -209,6 +210,25 @@ model TaskAssignee {
   @@id([taskId, userId])
   @@index([userId])
   @@map("task_assignees")
+}
+
+// Linha do tempo da tarefa: append-only, imutável, gerada pelo servidor. [detalhe-tarefa B/A2]
+model TaskActivity {
+  id        String   @id @default(cuid())
+  taskId    String
+  orgId     String
+  actorId   String
+  actorName String
+  type      String
+  payload   Json     @default("{}")
+  v         Int      @default(1)
+  createdAt DateTime @default(now())
+
+  // FK composta (task, org) — coerência de tenant no banco. [SEC-A02]
+  task Task @relation(fields: [taskId, orgId], references: [id, orgId])
+
+  @@index([taskId, createdAt(sort: Desc), id])
+  @@map("task_activity")
 }
 
 model Subtask {

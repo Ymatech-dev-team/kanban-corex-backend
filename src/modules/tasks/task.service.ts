@@ -1,11 +1,19 @@
-import { PERMISSIONS, type TaskStatus } from "@sistema-tasks/contracts";
+import { AUDITABLE_FIELDS, PERMISSIONS, type TaskStatus } from "@sistema-tasks/contracts";
 import type { CreateTaskInput, UpdateTaskInput } from "@sistema-tasks/contracts";
 import { AppError } from "../../lib/errors.js";
 import { withIdempotency, type IdempotencyStore } from "../../lib/idempotency.js";
 import type { SessionContext } from "../authz/types.js";
 import type { ProjectAccessRepo } from "../projects/types.js";
 import { generalEngagementId } from "../engagements/general.js";
-import type { SubtaskRepo, TaskFilterOpts, TaskPatch, TaskRecord, TaskRepo } from "./types.js";
+import type {
+  ActivityPayload,
+  ActivityRepo,
+  SubtaskRepo,
+  TaskFilterOpts,
+  TaskPatch,
+  TaskRecord,
+  TaskRepo,
+} from "./types.js";
 
 export class TaskService {
   constructor(
@@ -13,7 +21,34 @@ export class TaskService {
     private readonly subtasks: SubtaskRepo,
     private readonly access: ProjectAccessRepo,
     private readonly idempotency: IdempotencyStore,
+    private readonly activity?: ActivityRepo,
   ) {}
+
+  /**
+   * Registra evento(s) da linha do tempo APÓS a mutação já persistida — NÃO-fatal.
+   * Múltiplos eventos de UMA operação são gravados EM SEQUÊNCIA (await entre eles) para preservar a
+   * ordem no feed (createdAt monotônico). Se o log falhar, a operação principal não é afetada. [detalhe-tarefa B, review]
+   */
+  private recordActivity(
+    orgId: string,
+    taskId: string,
+    actorId: string,
+    events: Array<{ type: string; payload: ActivityPayload }>,
+  ): void {
+    const repo = this.activity;
+    if (!repo || events.length === 0) return;
+    void (async () => {
+      for (const e of events) await repo.record({ taskId, orgId, actorId, type: e.type, payload: e.payload });
+    })().catch((err) => {
+      // log-only [SEC-302]: atividade é secundária, mas falha não deve sumir silenciosamente
+      console.warn(`[activity] falha ao gravar evento da tarefa ${taskId}:`, err instanceof Error ? err.message : err);
+    });
+  }
+
+  async listActivity(taskId: string, orgId: string, opts: { limit?: number; cursor?: string }) {
+    if (!this.activity) return { items: [], nextCursor: null };
+    return this.activity.listByTask(taskId, orgId, { limit: opts.limit ?? 30, cursor: opts.cursor });
+  }
 
   /** Responsável precisa ter acesso ao cliente (senão a tarefa nasce órfã / vaza). [SEC-107] */
   private async assertAssigneeAccess(assigneeId: string | null | undefined, projectId: string): Promise<void> {
@@ -67,6 +102,7 @@ export class TaskService {
       if (!hasAccess) throw new AppError("NAO_ENCONTRADO", "Recurso não encontrado");
       return task;
     }
+    this.recordActivity(result.orgId, result.id, session.userId, [{ type: "CREATED", payload: {} }]);
     return result;
   }
 
@@ -87,7 +123,25 @@ export class TaskService {
       dueDate: patch.dueDate === undefined ? undefined : patch.dueDate ? new Date(patch.dueDate) : null,
       estimatedMinutes: patch.estimatedMinutes,
     };
-    return this.tasks.update(task.id, data);
+    const updated = await this.tasks.update(task.id, data);
+
+    // eventos: status separado; demais campos auditáveis (allowlist — NUNCA estimatedMinutes/custo). [SEC-S3]
+    const dueChanged =
+      data.dueDate !== undefined && (data.dueDate?.getTime() ?? null) !== (task.dueDate?.getTime() ?? null);
+    const changed = AUDITABLE_FIELDS.filter((f) => {
+      if (f === "title") return patch.title !== undefined && patch.title.trim() !== task.title;
+      if (f === "description") return patch.description !== undefined && (patch.description ?? null) !== task.description;
+      if (f === "priority") return patch.priority !== undefined && patch.priority !== task.priority;
+      if (f === "dueDate") return dueChanged;
+      return false;
+    });
+    const events: Array<{ type: string; payload: ActivityPayload }> = [];
+    if (patch.status !== undefined && patch.status !== task.status) {
+      events.push({ type: "STATUS_CHANGED", payload: { from: task.status, to: patch.status } });
+    }
+    if (changed.length > 0) events.push({ type: "FIELD_EDITED", payload: { fields: changed } });
+    this.recordActivity(task.orgId, task.id, session.userId, events);
+    return updated;
   }
 
   /** Mover no Kanban — erro discrimina "removida" (404) de "perdeu acesso" (403 → ejeta board). [JOR-1c] */
@@ -103,7 +157,13 @@ export class TaskService {
     if (!hasAccess) {
       throw new AppError("PROJETO_SEM_ACESSO", "Seu acesso a este cliente foi removido");
     }
-    return this.tasks.move(id, status, position);
+    const moved = await this.tasks.move(id, status, position);
+    if (status !== task.status) {
+      this.recordActivity(task.orgId, task.id, session.userId, [
+        { type: "STATUS_CHANGED", payload: { from: task.status, to: status } },
+      ]);
+    }
+    return moved;
   }
 
   async softDelete(id: string): Promise<void> {
@@ -118,22 +178,41 @@ export class TaskService {
     if (task.assigneeId === userId) {
       throw new AppError("VALIDACAO", "Essa pessoa já é a responsável principal");
     }
+    const alreadyExtra = task.extraAssigneeIds.includes(userId);
     if (task.assigneeId == null) {
       await this.tasks.promoteToPrimary(task.id, userId, task.orgId); // primeiro responsável = principal (custo/card)
     } else {
       await this.tasks.addExtraAssignee(task.id, userId, task.orgId);
+    }
+    // só registra se houve mudança real (re-add idempotente não gera evento-fantasma). [review]
+    if (!alreadyExtra) {
+      this.recordActivity(task.orgId, task.id, session.userId, [{ type: "ASSIGNEE_ADDED", payload: { userId } }]);
     }
     return this.getOrThrow(session, task.id);
   }
 
   /** Remove um responsável. Se for o principal, promove o extra mais antigo (ou fica sem responsável). */
   async removeAssignee(session: SessionContext, task: TaskRecord, userId: string): Promise<TaskRecord> {
-    if (task.assigneeId === userId) {
+    const wasPrimary = task.assigneeId === userId;
+    const wasExtra = task.extraAssigneeIds.includes(userId);
+    if (wasPrimary) {
       await this.tasks.clearPrimaryPromotingOldest(task.id, task.orgId);
-    } else {
+    } else if (wasExtra) {
       await this.tasks.removeExtraAssignee(task.id, userId, task.orgId);
     }
-    return this.getOrThrow(session, task.id);
+    const fresh = await this.getOrThrow(session, task.id);
+    // nada mudou (userId não era responsável) → sem evento-fantasma. [review, SEC-301]
+    if (wasPrimary || wasExtra) {
+      const events: Array<{ type: string; payload: ActivityPayload }> = [
+        { type: "ASSIGNEE_REMOVED", payload: { userId } },
+      ];
+      // se o principal saiu e outro foi promovido, registra a troca (em sequência, após o REMOVED)
+      if (wasPrimary && fresh.assigneeId) {
+        events.push({ type: "PRIMARY_CHANGED", payload: { userId: fresh.assigneeId } });
+      }
+      this.recordActivity(task.orgId, task.id, session.userId, events);
+    }
+    return fresh;
   }
 
   /** Torna um responsável (existente ou novo com acesso) o principal — o principal atual vira extra. */
@@ -141,6 +220,7 @@ export class TaskService {
     if (task.assigneeId === userId) return task;
     await this.assertAssigneeAccess(userId, task.projectId);
     await this.tasks.promoteToPrimary(task.id, userId, task.orgId);
+    this.recordActivity(task.orgId, task.id, session.userId, [{ type: "PRIMARY_CHANGED", payload: { userId } }]);
     return this.getOrThrow(session, task.id);
   }
 
@@ -175,19 +255,25 @@ export class TaskService {
     return this.getOrThrow(session, taskId);
   }
 
-  async addSubtask(session: SessionContext, taskId: string, title: string, idempotencyKey?: string) {
-    const { result } = await withIdempotency(this.idempotency, idempotencyKey, session.userId, async () => {
-      const position = (await this.subtasks.maxPosition(taskId)) + 1;
-      return this.subtasks.create(taskId, title, position);
+  async addSubtask(session: SessionContext, task: TaskRecord, title: string, idempotencyKey?: string) {
+    const { result, reused } = await withIdempotency(this.idempotency, idempotencyKey, session.userId, async () => {
+      const position = (await this.subtasks.maxPosition(task.id)) + 1;
+      return this.subtasks.create(task.id, title, position);
     });
+    if (!reused) this.recordActivity(task.orgId, task.id, session.userId, [{ type: "SUBTASK_ADDED", payload: { title } }]);
     return result;
   }
 
-  async updateSubtask(id: string, patch: { title?: string; done?: boolean }) {
-    return this.subtasks.update(id, patch);
+  async updateSubtask(session: SessionContext, task: TaskRecord, id: string, patch: { title?: string; done?: boolean }) {
+    const updated = await this.subtasks.update(id, patch);
+    if (patch.done === true) {
+      this.recordActivity(task.orgId, task.id, session.userId, [{ type: "SUBTASK_DONE", payload: { title: updated.title } }]);
+    }
+    return updated;
   }
 
-  async removeSubtask(id: string): Promise<void> {
+  async removeSubtask(session: SessionContext, task: TaskRecord, id: string): Promise<void> {
     await this.subtasks.remove(id);
+    this.recordActivity(task.orgId, task.id, session.userId, [{ type: "SUBTASK_REMOVED", payload: {} }]);
   }
 }

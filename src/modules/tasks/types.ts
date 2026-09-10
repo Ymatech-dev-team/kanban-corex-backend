@@ -72,6 +72,39 @@ export interface TaskRepo {
   clearPrimaryPromotingOldest(taskId: string, orgId: string): Promise<void>;
 }
 
+// ---- Linha do tempo (atividade) [detalhe-tarefa B] ----
+export type ActivityPayload = Record<string, unknown>;
+
+export interface NewActivity {
+  taskId: string;
+  orgId: string;
+  actorId: string;
+  type: string;
+  payload: ActivityPayload;
+}
+
+export interface ActivityRecord {
+  id: string;
+  taskId: string;
+  actorId: string;
+  actorName: string;
+  type: string;
+  payload: ActivityPayload;
+  createdAt: Date;
+}
+
+export interface ActivityPage {
+  items: ActivityRecord[];
+  nextCursor: string | null;
+}
+
+export interface ActivityRepo {
+  /** Grava um evento (snapshot do nome do ator resolvido aqui). Append-only. */
+  record(a: NewActivity): Promise<void>;
+  /** Feed keyset mais-recente-primeiro; cursor opaco `${createdAtISO}|${id}`. */
+  listByTask(taskId: string, orgId: string, opts: { limit: number; cursor?: string }): Promise<ActivityPage>;
+}
+
 export interface SubtaskRecord {
   id: string;
   taskId: string;
