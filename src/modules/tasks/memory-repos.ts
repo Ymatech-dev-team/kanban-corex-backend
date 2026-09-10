@@ -166,13 +166,19 @@ export class InMemoryActivityRepo implements ActivityRepo {
   }
 
   async record(a: NewActivity): Promise<void> {
+    // snapshot do nome do alvo (payload.userId) — espelha o Prisma repo. [review #2]
+    let payload = a.payload;
+    const targetId = typeof a.payload.userId === "string" ? a.payload.userId : null;
+    if (targetId && typeof a.payload.name !== "string" && this.names.has(targetId)) {
+      payload = { ...a.payload, name: this.names.get(targetId) };
+    }
     this.items.push({
       id: randomUUID(),
       taskId: a.taskId,
       actorId: a.actorId,
       actorName: this.names.get(a.actorId) ?? a.actorId,
       type: a.type,
-      payload: a.payload,
+      payload,
       createdAt: new Date(),
       seq: this.counter++, // desempate determinístico por ordem de inserção (mesmo ms)
     });

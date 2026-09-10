@@ -211,6 +211,13 @@ export class PrismaActivityRepo implements ActivityRepo {
   async record(a: NewActivity): Promise<void> {
     // snapshot do nome do ator (sobrevive a remoção/renome do usuário). [detalhe-tarefa RF-A4]
     const u = await this.db.user.findUnique({ where: { id: a.actorId }, select: { name: true } });
+    // snapshot também do ALVO (payload.userId) — evita "sem acesso" pra quem saiu depois. [review #2]
+    let payload = a.payload;
+    const targetId = typeof a.payload.userId === "string" ? a.payload.userId : null;
+    if (targetId && typeof a.payload.name !== "string") {
+      const target = await this.db.user.findUnique({ where: { id: targetId }, select: { name: true } });
+      if (target?.name) payload = { ...a.payload, name: target.name };
+    }
     await this.db.taskActivity.create({
       data: {
         taskId: a.taskId,
@@ -218,7 +225,7 @@ export class PrismaActivityRepo implements ActivityRepo {
         actorId: a.actorId,
         actorName: u?.name ?? a.actorId,
         type: a.type,
-        payload: a.payload as Prisma.InputJsonValue,
+        payload: payload as Prisma.InputJsonValue,
       },
     });
   }
