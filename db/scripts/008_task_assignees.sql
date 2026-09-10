@@ -1,11 +1,18 @@
 -- 008 — Detalhe da tarefa (Escopo A): responsáveis EXTRAS (multi-responsável).
 -- O responsável PRINCIPAL continua em tasks.assigneeId (custo/card intactos). [detalhe-tarefa A1]
--- Idempotente. Sem PL/pgSQL (runner do Neon). JP roda manual: dev → validar → prod.
+-- Idempotente e re-executável. JP roda manual: dev → validar → prod.
 BEGIN;
 
 -- Pré-requisito p/ a FK composta de tenant (task, org) das tabelas-filhas.
-ALTER TABLE tasks DROP CONSTRAINT IF EXISTS tasks_id_org_uniq;
-ALTER TABLE tasks ADD CONSTRAINT tasks_id_org_uniq UNIQUE (id, "orgId");
+-- NÃO dropar: as FKs de task_assignees/activity/comment dependem dela (drop falha com 2BP01). Cria só se faltar.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'tasks_id_org_uniq' AND conrelid = 'tasks'::regclass
+  ) THEN
+    ALTER TABLE tasks ADD CONSTRAINT tasks_id_org_uniq UNIQUE (id, "orgId");
+  END IF;
+END $$;
 
 CREATE TABLE IF NOT EXISTS task_assignees (
   "taskId"    TEXT NOT NULL,
