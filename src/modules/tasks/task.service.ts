@@ -7,13 +7,63 @@ import type { ProjectAccessRepo } from "../projects/types.js";
 import { generalEngagementId } from "../engagements/general.js";
 import type {
   ActivityPayload,
+  ActivityRecord,
   ActivityRepo,
+  CommentRecord,
+  CommentRepo,
+  FeedCursor,
+  FeedItem,
+  FeedPage,
   SubtaskRepo,
   TaskFilterOpts,
   TaskPatch,
   TaskRecord,
   TaskRepo,
 } from "./types.js";
+
+/** cursor opaco do feed: "<createdAt ISO>|<src>|<id>". src desempata cross-tabela no mesmo ms. */
+function srcOf(item: FeedItem): "a" | "c" {
+  return item.type === "COMMENT" ? "c" : "a";
+}
+function rankOf(src: "a" | "c"): number {
+  return src === "a" ? 1 : 0; // no mesmo ms, eventos (a) aparecem antes de comentários (c)
+}
+function encodeCursor(item: FeedItem): string {
+  return `${item.createdAt}|${srcOf(item)}|${item.id}`;
+}
+function decodeCursor(c: string): FeedCursor | null {
+  const parts = c.split("|");
+  if (parts.length < 3) return null;
+  const [iso, src, ...idParts] = parts;
+  const d = new Date(iso);
+  const id = idParts.join("|");
+  if (Number.isNaN(d.getTime()) || (src !== "a" && src !== "c") || !id) return null;
+  return { createdAt: d, src, id };
+}
+function eventToItem(e: ActivityRecord): FeedItem {
+  return {
+    id: e.id,
+    createdAt: e.createdAt.toISOString(),
+    type: e.type,
+    actorId: e.actorId,
+    actorName: e.actorName,
+    payload: e.payload,
+  };
+}
+function commentToItem(c: CommentRecord, userId: string, canModerate: boolean): FeedItem {
+  const deleted = c.deletedAt != null;
+  return {
+    id: c.id,
+    createdAt: c.createdAt.toISOString(),
+    type: "COMMENT",
+    actorId: c.authorId,
+    actorName: c.authorName,
+    payload: {},
+    body: deleted ? null : c.body, // tombstone: mantém o slot na timeline [SEC-107]
+    editedAt: c.editedAt ? c.editedAt.toISOString() : null,
+    canManage: !deleted && (c.authorId === userId || canModerate),
+  };
+}
 
 export class TaskService {
   constructor(
@@ -22,6 +72,7 @@ export class TaskService {
     private readonly access: ProjectAccessRepo,
     private readonly idempotency: IdempotencyStore,
     private readonly activity?: ActivityRepo,
+    private readonly comments?: CommentRepo,
   ) {}
 
   /**
@@ -45,9 +96,68 @@ export class TaskService {
     });
   }
 
-  async listActivity(taskId: string, orgId: string, opts: { limit?: number; cursor?: string }) {
-    if (!this.activity) return { items: [], nextCursor: null };
-    return this.activity.listByTask(taskId, orgId, { limit: opts.limit ?? 30, cursor: opts.cursor });
+  /** Feed unificado: funde eventos (imutáveis) + comentários (mutáveis) por (createdAt, id) desc. [detalhe-tarefa C] */
+  async listFeed(
+    task: TaskRecord,
+    session: SessionContext,
+    opts: { limit?: number; cursor?: string },
+    canModerate: boolean,
+  ): Promise<FeedPage> {
+    const limit = Math.min(Math.max(opts.limit ?? 30, 1), 50);
+    const before = opts.cursor ? decodeCursor(opts.cursor) : null;
+    // busca limit+1 de CADA fonte pra saber se há próxima página após o merge.
+    const [events, comments] = await Promise.all([
+      this.activity ? this.activity.listSince(task.id, task.orgId, before, limit + 1) : Promise.resolve([]),
+      this.comments ? this.comments.listSince(task.id, task.orgId, before, limit + 1) : Promise.resolve([]),
+    ]);
+    const merged: FeedItem[] = [
+      ...events.map(eventToItem),
+      ...comments.map((c) => commentToItem(c, session.userId, canModerate)),
+    ].sort((a, b) => {
+      const ta = Date.parse(a.createdAt);
+      const tb = Date.parse(b.createdAt);
+      // mesma ordem total do keyset dos repos: (createdAt desc, rank(src) desc, id desc)
+      return tb - ta || rankOf(srcOf(b)) - rankOf(srcOf(a)) || (a.id < b.id ? 1 : -1);
+    });
+    const hasMore = merged.length > limit;
+    const page = merged.slice(0, limit);
+    const last = page[page.length - 1];
+    return { items: page, nextCursor: hasMore && last ? encodeCursor(last) : null };
+  }
+
+  // ---- comentários [detalhe-tarefa C] ----
+
+  async addComment(session: SessionContext, task: TaskRecord, body: string, idempotencyKey?: string) {
+    if (!this.comments) throw new AppError("INTERNO", "Comentários indisponíveis");
+    const repo = this.comments;
+    const { result } = await withIdempotency(this.idempotency, idempotencyKey, session.userId, async () =>
+      repo.create({ taskId: task.id, orgId: task.orgId, authorId: session.userId, body }),
+    );
+    // reuso idempotente devolve só {id} → rebusca o comentário completo (como o create de tarefa). [review C1 #1]
+    if (!("body" in result)) {
+      const full = await repo.findById(result.id, task.orgId);
+      if (!full) throw new AppError("NAO_ENCONTRADO", "Recurso não encontrado");
+      return full;
+    }
+    return result;
+  }
+
+  /** Resolve o comentário garantindo tenant + que pertence à tarefa. */
+  async getCommentOrThrow(task: TaskRecord, commentId: string): Promise<CommentRecord> {
+    if (!this.comments) throw new AppError("NAO_ENCONTRADO", "Recurso não encontrado");
+    const c = await this.comments.findById(commentId, task.orgId);
+    if (!c || c.taskId !== task.id || c.deletedAt) throw new AppError("NAO_ENCONTRADO", "Recurso não encontrado");
+    return c;
+  }
+
+  async editComment(task: TaskRecord, commentId: string, body: string): Promise<CommentRecord> {
+    if (!this.comments) throw new AppError("INTERNO", "Comentários indisponíveis");
+    return this.comments.update(commentId, task.id, task.orgId, body);
+  }
+
+  async deleteComment(task: TaskRecord, commentId: string): Promise<void> {
+    if (!this.comments) throw new AppError("INTERNO", "Comentários indisponíveis");
+    await this.comments.softDelete(commentId, task.id, task.orgId);
   }
 
   /** Responsável precisa ter acesso ao cliente (senão a tarefa nasce órfã / vaza). [SEC-107] */

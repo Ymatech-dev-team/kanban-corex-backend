@@ -25,6 +25,7 @@ export const PERMISSIONS = {
   engagements_editar: "engagements.editar",
   engagements_excluir: "engagements.excluir",
   engagements_consultores: "engagements.consultores",
+  tarefas_moderar_comentarios: "tarefas.moderar_comentarios",
 } as const;
 
 export type Permission = (typeof PERMISSIONS)[keyof typeof PERMISSIONS];
@@ -55,6 +56,7 @@ export const PERMISSION_SCOPE: Record<Permission, "org" | "project"> = {
   "engagements.editar": "project",
   "engagements.excluir": "project",
   "engagements.consultores": "project",
+  "tarefas.moderar_comentarios": "project",
 };
 
 /** Meta-permissões: concessão exige confirmação reforçada e auditoria à parte. [SEC-104/111] */

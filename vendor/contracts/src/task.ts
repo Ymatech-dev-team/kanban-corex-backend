@@ -69,9 +69,17 @@ export type AuditableField = (typeof AUDITABLE_FIELDS)[number];
 /** Paginação keyset da timeline (mais recente primeiro). */
 export const activityFiltersSchema = z.object({
   limit: z.coerce.number().int().min(1).max(50).optional(),
-  cursor: z.string().optional(),
+  cursor: z.string().max(128).optional(), // cursor válido é "ISO|cuid" (~60 chars) [SEC-C1-003]
 });
 export type ActivityFilters = z.infer<typeof activityFiltersSchema>;
+
+/** Comentário manual na timeline — texto puro (front renderiza escapado). [detalhe-tarefa C, SEC-108/109] */
+export const createCommentSchema = z.object({
+  body: z.string().trim().min(1).max(5000),
+});
+export type CreateCommentInput = z.infer<typeof createCommentSchema>;
+export const editCommentSchema = createCommentSchema;
+export type EditCommentInput = CreateCommentInput;
 
 export const createSubtaskSchema = z.object({
   title: z.string().trim().min(1).max(200),

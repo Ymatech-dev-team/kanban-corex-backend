@@ -1,9 +1,12 @@
 import { randomUUID } from "node:crypto";
 import type {
-  ActivityPage,
   ActivityRecord,
   ActivityRepo,
+  CommentRecord,
+  CommentRepo,
+  FeedCursor,
   NewActivity,
+  NewComment,
   NewTask,
   SubtaskRecord,
   SubtaskRepo,
@@ -154,8 +157,38 @@ export class InMemoryTaskRepo implements TaskRepo {
   }
 }
 
+// Relógio monotônico compartilhado: garante createdAt estritamente crescente entre atividade e
+// comentários no in-memory (em prod os timestamps já diferem por request). Ordem = inserção.
+let lastTs = 0;
+function monoNow(): Date {
+  lastTs = Math.max(Date.now(), lastTs + 1);
+  return new Date(lastTs);
+}
+
+/** keyset por fonte (createdAt desc, rank(src) desc, id desc), com `< before`. Espelha o Prisma. [review C1 #2] */
+function keysetDesc<T extends { createdAt: Date; id: string }>(
+  rows: T[],
+  before: FeedCursor | null,
+  limit: number,
+  mySrc: "a" | "c",
+): T[] {
+  const sorted = [...rows].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime() || (a.id < b.id ? 1 : -1));
+  if (!before) return sorted.slice(0, limit);
+  const bRank = before.src === "a" ? 1 : 0;
+  const myRank = mySrc === "a" ? 1 : 0;
+  const filtered = sorted.filter((r) => {
+    const t = r.createdAt.getTime();
+    const bt = before.createdAt.getTime();
+    if (t < bt) return true;
+    if (t > bt) return false;
+    if (myRank === bRank) return r.id < before.id;
+    return myRank < bRank; // mesmo ms: minha fonte vem depois (inclui) ou antes (exclui) do cursor
+  });
+  return filtered.slice(0, limit);
+}
+
 export class InMemoryActivityRepo implements ActivityRepo {
-  private items: Array<ActivityRecord & { seq: number }> = [];
+  private items: ActivityRecord[] = [];
   private names = new Map<string, string>();
   private counter = 0;
 
@@ -173,27 +206,65 @@ export class InMemoryActivityRepo implements ActivityRepo {
       payload = { ...a.payload, name: this.names.get(targetId) };
     }
     this.items.push({
-      id: randomUUID(),
+      id: `a${String(this.counter++).padStart(12, "0")}`, // id monotônico → ordem estável no mesmo ms
       taskId: a.taskId,
       actorId: a.actorId,
       actorName: this.names.get(a.actorId) ?? a.actorId,
       type: a.type,
       payload,
-      createdAt: new Date(),
-      seq: this.counter++, // desempate determinístico por ordem de inserção (mesmo ms)
+      createdAt: monoNow(),
     });
   }
 
-  async listByTask(taskId: string, _orgId: string, opts: { limit: number; cursor?: string }): Promise<ActivityPage> {
-    const all = this.items
-      .filter((i) => i.taskId === taskId)
-      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime() || b.seq - a.seq); // mais recente primeiro
-    const start = opts.cursor ? all.findIndex((i) => i.id === opts.cursor) + 1 : 0;
-    const page = all.slice(start, start + opts.limit);
-    const nextIndex = start + opts.limit;
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const items = page.map(({ seq: _seq, ...rest }) => rest);
-    return { items, nextCursor: nextIndex < all.length ? page[page.length - 1].id : null };
+  async listSince(taskId: string, orgId: string, before: FeedCursor | null, limit: number): Promise<ActivityRecord[]> {
+    void orgId;
+    return keysetDesc(this.items.filter((i) => i.taskId === taskId), before, limit, "a");
+  }
+}
+
+export class InMemoryCommentRepo implements CommentRepo {
+  private items = new Map<string, CommentRecord>();
+  private names = new Map<string, string>();
+  private counter = 0;
+
+  setName(userId: string, name: string): this {
+    this.names.set(userId, name);
+    return this;
+  }
+
+  async create(c: NewComment): Promise<CommentRecord> {
+    const rec: CommentRecord = {
+      id: `c${String(this.counter++).padStart(12, "0")}`,
+      taskId: c.taskId,
+      orgId: c.orgId,
+      authorId: c.authorId,
+      authorName: this.names.get(c.authorId) ?? c.authorId,
+      body: c.body,
+      createdAt: monoNow(),
+      editedAt: null,
+      deletedAt: null,
+    };
+    this.items.set(rec.id, rec);
+    return { ...rec };
+  }
+  async findById(id: string, orgId: string): Promise<CommentRecord | null> {
+    const c = this.items.get(id);
+    return c && c.orgId === orgId ? { ...c } : null;
+  }
+  async update(id: string, taskId: string, orgId: string, body: string): Promise<CommentRecord> {
+    const c = this.items.get(id);
+    if (!c || c.orgId !== orgId || c.taskId !== taskId) throw new Error("not found");
+    c.body = body;
+    c.editedAt = new Date();
+    return { ...c };
+  }
+  async softDelete(id: string, taskId: string, orgId: string): Promise<void> {
+    const c = this.items.get(id);
+    if (c && c.orgId === orgId && c.taskId === taskId) c.deletedAt = new Date();
+  }
+  async listSince(taskId: string, orgId: string, before: FeedCursor | null, limit: number): Promise<CommentRecord[]> {
+    void orgId;
+    return keysetDesc([...this.items.values()].filter((i) => i.taskId === taskId), before, limit, "c");
   }
 }
 

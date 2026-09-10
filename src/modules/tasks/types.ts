@@ -93,16 +93,64 @@ export interface ActivityRecord {
   createdAt: Date;
 }
 
-export interface ActivityPage {
-  items: ActivityRecord[];
-  nextCursor: string | null;
+/** Cursor keyset compartilhado entre atividade e comentários. `src` desempata cross-tabela no mesmo ms. [review C1 #2] */
+export type FeedSource = "a" | "c"; // a = atividade (evento), c = comentário
+export interface FeedCursor {
+  createdAt: Date;
+  src: FeedSource;
+  id: string;
 }
 
 export interface ActivityRepo {
   /** Grava um evento (snapshot do nome do ator resolvido aqui). Append-only. */
   record(a: NewActivity): Promise<void>;
-  /** Feed keyset mais-recente-primeiro; cursor opaco `${createdAtISO}|${id}`. */
-  listByTask(taskId: string, orgId: string, opts: { limit: number; cursor?: string }): Promise<ActivityPage>;
+  /** Linhas mais-recente-primeiro com keyset `< before` (para o merge do feed). */
+  listSince(taskId: string, orgId: string, before: FeedCursor | null, limit: number): Promise<ActivityRecord[]>;
+}
+
+// ---- Comentários (mutáveis, soft-delete) [detalhe-tarefa C] ----
+export interface CommentRecord {
+  id: string;
+  taskId: string;
+  orgId: string;
+  authorId: string;
+  authorName: string;
+  body: string;
+  createdAt: Date;
+  editedAt: Date | null;
+  deletedAt: Date | null;
+}
+export interface NewComment {
+  taskId: string;
+  orgId: string;
+  authorId: string;
+  body: string;
+}
+export interface CommentRepo {
+  create(c: NewComment): Promise<CommentRecord>;
+  findById(id: string, orgId: string): Promise<CommentRecord | null>;
+  // taskId + orgId no WHERE (defense-in-depth, não depende da ordem de chamadas). [SEC-C1-004]
+  update(id: string, taskId: string, orgId: string, body: string): Promise<CommentRecord>;
+  softDelete(id: string, taskId: string, orgId: string): Promise<void>;
+  listSince(taskId: string, orgId: string, before: FeedCursor | null, limit: number): Promise<CommentRecord[]>;
+}
+
+/** Item unificado do feed (um EVENTO ou um COMENTÁRIO), como a UI consome. [detalhe-tarefa C] */
+export interface FeedItem {
+  id: string;
+  createdAt: string; // ISO
+  type: string; // tipo do evento, ou "COMMENT"
+  actorId: string;
+  actorName: string;
+  payload: ActivityPayload;
+  // só quando type === "COMMENT":
+  body?: string | null; // null = comentário removido (tombstone)
+  editedAt?: string | null;
+  canManage?: boolean; // autor OU moderador (hint de UI; barreira real é o backend)
+}
+export interface FeedPage {
+  items: FeedItem[];
+  nextCursor: string | null;
 }
 
 export interface SubtaskRecord {

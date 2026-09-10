@@ -184,6 +184,7 @@ model Task {
   assignee   User?      @relation("assignee", fields: [assigneeId], references: [id])
   extraAssignees TaskAssignee[]
   activity   TaskActivity[]
+  comments   TaskComment[]
   subtasks   Subtask[]
 
   // habilita FKs compostas de tenant das tabelas-filhas (task_assignees etc.) [detalhe-tarefa A4]
@@ -229,6 +230,25 @@ model TaskActivity {
 
   @@index([taskId, createdAt(sort: Desc), id])
   @@map("task_activity")
+}
+
+// Comentário manual da tarefa: mutável (editar/excluir do autor), soft-delete. [detalhe-tarefa C/A2]
+model TaskComment {
+  id         String    @id @default(cuid())
+  taskId     String
+  orgId      String
+  authorId   String
+  authorName String
+  body       String
+  createdAt  DateTime  @default(now())
+  editedAt   DateTime?
+  deletedAt  DateTime?
+
+  // FK composta (task, org) — coerência de tenant no banco. [SEC-A02]
+  task Task @relation(fields: [taskId, orgId], references: [id, orgId])
+
+  @@index([taskId, createdAt])
+  @@map("task_comment")
 }
 
 model Subtask {

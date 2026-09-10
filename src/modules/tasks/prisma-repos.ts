@@ -1,10 +1,13 @@
 import type { PrismaClient, Prisma } from "@prisma/client";
 import type { TaskStatus, TaskPriority } from "@sistema-tasks/contracts";
 import type {
-  ActivityPage,
   ActivityRecord,
   ActivityRepo,
+  CommentRecord,
+  CommentRepo,
+  FeedCursor,
   NewActivity,
+  NewComment,
   NewTask,
   SubtaskRecord,
   SubtaskRepo,
@@ -14,16 +17,19 @@ import type {
   TaskRepo,
 } from "./types.js";
 
-/** cursor opaco do feed: "<createdAt ISO>|<id>". */
-function encodeCursor(a: { createdAt: Date; id: string }): string {
-  return `${a.createdAt.toISOString()}|${a.id}`;
-}
-function decodeCursor(c: string): { createdAt: Date; id: string } | null {
-  const i = c.lastIndexOf("|");
-  if (i < 0) return null;
-  const d = new Date(c.slice(0, i));
-  const id = c.slice(i + 1);
-  return Number.isNaN(d.getTime()) || !id ? null : { createdAt: d, id };
+/**
+ * keyset por fonte: ordem total (createdAt desc, rank(src) desc, id desc). Como cada tabela é uma fonte fixa,
+ * o filtro `< before` no mesmo ms depende do rank da fonte do cursor vs a desta tabela. [review C1 #2]
+ */
+function beforeWhereForSource(before: FeedCursor | null, mySrc: "a" | "c") {
+  if (!before) return {};
+  const bRank = before.src === "a" ? 1 : 0;
+  const myRank = mySrc === "a" ? 1 : 0;
+  if (myRank === bRank) {
+    return { OR: [{ createdAt: { lt: before.createdAt } }, { createdAt: before.createdAt, id: { lt: before.id } }] };
+  }
+  if (myRank < bRank) return { createdAt: { lte: before.createdAt } }; // no mesmo ms vêm DEPOIS do cursor
+  return { createdAt: { lt: before.createdAt } }; // no mesmo ms vêm ANTES (já mostrados)
 }
 
 type PrismaTask = {
@@ -230,30 +236,47 @@ export class PrismaActivityRepo implements ActivityRepo {
     });
   }
 
-  async listByTask(taskId: string, orgId: string, opts: { limit: number; cursor?: string }): Promise<ActivityPage> {
-    const cur = opts.cursor ? decodeCursor(opts.cursor) : null;
+  async listSince(taskId: string, orgId: string, before: FeedCursor | null, limit: number): Promise<ActivityRecord[]> {
     const rows = await this.db.taskActivity.findMany({
-      where: {
-        taskId,
-        orgId, // orgId no WHERE — defense-in-depth cross-org [SEC-102]
-        ...(cur
-          ? {
-              OR: [
-                { createdAt: { lt: cur.createdAt } },
-                { createdAt: cur.createdAt, id: { lt: cur.id } },
-              ],
-            }
-          : {}),
-      },
+      where: { taskId, orgId, ...beforeWhereForSource(before, "a") }, // orgId no WHERE — cross-org [SEC-102]
       orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-      take: opts.limit + 1, // +1 pra saber se há próxima página
+      take: limit,
     });
-    const hasMore = rows.length > opts.limit;
-    const page = hasMore ? rows.slice(0, opts.limit) : rows;
-    return {
-      items: page.map(toActivity),
-      nextCursor: hasMore ? encodeCursor(page[page.length - 1]) : null,
-    };
+    return rows.map(toActivity);
+  }
+}
+
+type PrismaComment = {
+  id: string; taskId: string; orgId: string; authorId: string; authorName: string; body: string;
+  createdAt: Date; editedAt: Date | null; deletedAt: Date | null;
+};
+
+export class PrismaCommentRepo implements CommentRepo {
+  constructor(private readonly db: PrismaClient) {}
+
+  async create(c: NewComment): Promise<CommentRecord> {
+    const u = await this.db.user.findUnique({ where: { id: c.authorId }, select: { name: true } });
+    return this.db.taskComment.create({
+      data: { taskId: c.taskId, orgId: c.orgId, authorId: c.authorId, authorName: u?.name ?? c.authorId, body: c.body },
+    });
+  }
+  async findById(id: string, orgId: string): Promise<CommentRecord | null> {
+    return this.db.taskComment.findFirst({ where: { id, orgId } });
+  }
+  async update(id: string, taskId: string, orgId: string, body: string): Promise<CommentRecord> {
+    // updateMany p/ escopar id+taskId+orgId; depois relê. [SEC-A04/C1-004]
+    await this.db.taskComment.updateMany({ where: { id, taskId, orgId }, data: { body, editedAt: new Date() } });
+    return (await this.db.taskComment.findFirst({ where: { id, orgId } })) as PrismaComment;
+  }
+  async softDelete(id: string, taskId: string, orgId: string): Promise<void> {
+    await this.db.taskComment.updateMany({ where: { id, taskId, orgId }, data: { deletedAt: new Date() } });
+  }
+  async listSince(taskId: string, orgId: string, before: FeedCursor | null, limit: number): Promise<CommentRecord[]> {
+    return this.db.taskComment.findMany({
+      where: { taskId, orgId, ...beforeWhereForSource(before, "c") },
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      take: limit,
+    });
   }
 }
 

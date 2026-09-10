@@ -10,11 +10,15 @@ import {
   updateSubtaskSchema,
   addAssigneeSchema,
   activityFiltersSchema,
+  createCommentSchema,
+  editCommentSchema,
   PERMISSIONS,
 } from "@sistema-tasks/contracts";
 import type { Authenticate } from "../authz/authenticate.js";
 import { Authorizer } from "../authz/authorizer.js";
+import { AppError } from "../../lib/errors.js";
 import { TaskService } from "./task.service.js";
+import type { TaskRecord } from "./types.js";
 
 const projectParams = z.object({ projectId: z.string().min(1) });
 const idParams = z.object({ id: z.string().min(1) });
@@ -63,7 +67,52 @@ export function makeTaskRoutes(authenticate: Authenticate, authz: Authorizer, se
       async (req) => {
         const task = await service.getOrThrow(req.session!, req.params.id);
         await authz.assertProjectAccess(req.session!, task.projectId);
-        return service.listActivity(task.id, req.session!.orgId, req.query);
+        const canModerate = await authz.can(req.session!, PERMISSIONS.tarefas_moderar_comentarios, task.projectId);
+        return service.listFeed(task, req.session!, req.query, canModerate);
+      },
+    );
+
+    // ---- comentários (comentar = acesso ao cliente; editar/excluir = autor OU moderador) [detalhe-tarefa C] ----
+    const commentParams = z.object({ id: z.string().min(1).max(64), commentId: z.string().min(1).max(64) });
+
+    r.post(
+      "/tasks/:id/comments",
+      { preHandler: authenticate, schema: { params: idParams, body: createCommentSchema } },
+      async (req) => {
+        const task = await service.getOrThrow(req.session!, req.params.id);
+        await authz.assertProjectAccess(req.session!, task.projectId); // comentar exige acesso ao cliente [RF-C6]
+        return service.addComment(req.session!, task, req.body.body, header(req, "idempotency-key"));
+      },
+    );
+
+    async function assertCanManageComment(req: FastifyRequest, task: TaskRecord, commentId: string) {
+      const c = await service.getCommentOrThrow(task, commentId);
+      const isAuthor = c.authorId === req.session!.userId;
+      const canMod = await authz.can(req.session!, PERMISSIONS.tarefas_moderar_comentarios, task.projectId);
+      if (!isAuthor && !canMod) throw new AppError("SEM_PERMISSAO", "Você não pode editar este comentário");
+      return c;
+    }
+
+    r.patch(
+      "/tasks/:id/comments/:commentId",
+      { preHandler: authenticate, schema: { params: commentParams, body: editCommentSchema } },
+      async (req) => {
+        const task = await service.getOrThrow(req.session!, req.params.id);
+        await authz.assertProjectAccess(req.session!, task.projectId);
+        await assertCanManageComment(req, task, req.params.commentId);
+        return service.editComment(task, req.params.commentId, req.body.body);
+      },
+    );
+
+    r.delete(
+      "/tasks/:id/comments/:commentId",
+      { preHandler: authenticate, schema: { params: commentParams } },
+      async (req) => {
+        const task = await service.getOrThrow(req.session!, req.params.id);
+        await authz.assertProjectAccess(req.session!, task.projectId);
+        await assertCanManageComment(req, task, req.params.commentId);
+        await service.deleteComment(task, req.params.commentId);
+        return { ok: true };
       },
     );
 
