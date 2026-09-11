@@ -67,8 +67,10 @@ export function makeTaskRoutes(authenticate: Authenticate, authz: Authorizer, se
       return { tasks: await redactCostList(tasks, req.session!, authz) }; // cruza clientes → custos.ver por projeto
     });
 
-    // Visão global: todas as tarefas do escopo acessível, com filtros. [tarefas-visao-global]
+    // Visão global: todas as tarefas do escopo acessível, com filtros. Gated pela permissão dedicada
+    // (org-scoped); o QUE aparece segue o acesso a projetos (resolveScope). [tarefas-visao-global]
     r.get("/tasks", { preHandler: authenticate, schema: { querystring: listAllTasksFiltersSchema } }, async (req) => {
+      await authz.assertCan(req.session!, PERMISSIONS.tarefas_ver_globais);
       const { tasks, hasMore } = await service.listAll(req.session!, req.query);
       return { tasks: await redactCostList(tasks, req.session!, authz), hasMore };
     });

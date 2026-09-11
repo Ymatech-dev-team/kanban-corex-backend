@@ -21,6 +21,7 @@ export const PERMISSIONS = {
   tarefas_excluir: "tarefas.excluir",
   subtarefas_gerenciar: "subtarefas.gerenciar",
   custos_ver: "custos.ver",
+  tarefas_ver_globais: "tarefas.ver_globais",
   engagements_criar: "engagements.criar",
   engagements_editar: "engagements.editar",
   engagements_excluir: "engagements.excluir",
@@ -52,6 +53,7 @@ export const PERMISSION_SCOPE: Record<Permission, "org" | "project"> = {
   "tarefas.excluir": "project",
   "subtarefas.gerenciar": "project",
   "custos.ver": "project",
+  "tarefas.ver_globais": "org", // ver a aba Tarefas global (agregada); escopo do que aparece segue o acesso a projetos
   "engagements.criar": "project",
   "engagements.editar": "project",
   "engagements.excluir": "project",

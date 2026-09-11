@@ -28,17 +28,20 @@ beforeAll(async () => {
   tokens = new TokenService({
     accessSecret: "a", refreshSecret: "r", issuer: "iss", audience: "aud", accessTtlSec: 900, refreshTtlSec: 1000,
   });
+  const G = PERMISSIONS.tarefas_ver_globais; // ver a aba Tarefas global
   const users = new InMemoryAuthzUserRepo()
-    // acesso a P1+P2, SEM custos_ver, SEM acessar_todos
-    .add({ id: "u1", orgId: "o1", deletedAt: null, tokenVersion: 0, mustChangePassword: false, rolePermissions: [], extraPermissions: [] })
-    // custos_ver em P1
-    .add({ id: "boss", orgId: "o1", deletedAt: null, tokenVersion: 0, mustChangePassword: false, rolePermissions: [PERMISSIONS.custos_ver], extraPermissions: [] })
-    // acessar_todos (org o1) + custos_ver
-    .add({ id: "super", orgId: "o1", deletedAt: null, tokenVersion: 0, mustChangePassword: false, rolePermissions: [PERMISSIONS.projetos_acessar_todos, PERMISSIONS.custos_ver], extraPermissions: [] });
+    // acesso a P1+P2, com ver_globais, SEM custos_ver, SEM acessar_todos
+    .add({ id: "u1", orgId: "o1", deletedAt: null, tokenVersion: 0, mustChangePassword: false, rolePermissions: [G], extraPermissions: [] })
+    // ver_globais + custos_ver em P1
+    .add({ id: "boss", orgId: "o1", deletedAt: null, tokenVersion: 0, mustChangePassword: false, rolePermissions: [G, PERMISSIONS.custos_ver], extraPermissions: [] })
+    // ver_globais + acessar_todos (org o1) + custos_ver
+    .add({ id: "super", orgId: "o1", deletedAt: null, tokenVersion: 0, mustChangePassword: false, rolePermissions: [G, PERMISSIONS.projetos_acessar_todos, PERMISSIONS.custos_ver], extraPermissions: [] })
+    // acesso a P1, mas SEM a permissão de ver a aba global
+    .add({ id: "nope", orgId: "o1", deletedAt: null, tokenVersion: 0, mustChangePassword: false, rolePermissions: [], extraPermissions: [] });
 
   const access = new InMemoryProjectAccessRepo()
-    .addUser("u1", "o1").addUser("boss", "o1").addUser("super", "o1");
-  access.grant(P1, "u1"); access.grant(P2, "u1"); access.grant(P1, "boss");
+    .addUser("u1", "o1").addUser("boss", "o1").addUser("super", "o1").addUser("nope", "o1");
+  access.grant(P1, "u1"); access.grant(P2, "u1"); access.grant(P1, "boss"); access.grant(P1, "nope");
 
   const taskRepo = new InMemoryTaskRepo();
   const mk = async (key: string, p: { projectId: string; engagementId: string; orgId?: string; status?: "TODO" | "DOING" | "DONE"; priority?: "LOW" | "MEDIUM" | "HIGH"; dueDate?: Date | null; assigneeId?: string | null; estimatedMinutes?: number | null }) => {
@@ -79,6 +82,11 @@ function get(url: string, u: string, orgId = "o1") {
 const idsOf = (res: { json: () => { tasks: { id: string }[] } }) => res.json().tasks.map((t) => t.id);
 
 describe("GET /tasks — visão global", () => {
+  it("sem a permissão tarefas.ver_globais → 403 (mesmo com acesso a projeto)", async () => {
+    const res = await get("/tasks", "nope");
+    expect(res.statusCode).toBe(403);
+  });
+
   it("escopo: u1 vê só P1+P2 acessíveis (não P3 nem outro org); DONE oculto por padrão", async () => {
     const res = await get("/tasks", "u1");
     expect(res.statusCode).toBe(200);
