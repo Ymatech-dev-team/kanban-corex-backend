@@ -6,6 +6,7 @@ import type {
   CommentRecord,
   CommentRepo,
   FeedCursor,
+  ListAllResult,
   NewActivity,
   NewComment,
   NewTask,
@@ -127,6 +128,37 @@ export class PrismaTaskRepo implements TaskRepo {
       include: withExtras,
     });
     return rows.map(toTask);
+  }
+  async listAll(scope: string[] | "all", orgId: string, f: TaskFilterOpts): Promise<ListAllResult> {
+    // Composição por AND explícito: escopo (projectId IN) e filtro-cliente (projectId =) não podem
+    // colidir na mesma chave; o OR de responsável fica isolado no seu próprio elemento. [tarefas-visao-global RF-A4/A5]
+    const and: Prisma.TaskWhereInput[] = [];
+    if (scope !== "all") and.push({ projectId: { in: scope } }); // escopo acessível — filtro intersecta, nunca substitui
+    if (f.projectId) and.push({ projectId: f.projectId }); // Cliente
+    if (f.engagementId) and.push({ engagementId: f.engagementId }); // Projeto
+    if (f.dueFrom || f.dueTo) {
+      and.push({
+        dueDate: {
+          ...(f.dueFrom ? { gte: new Date(f.dueFrom) } : {}),
+          ...(f.dueTo ? { lte: new Date(f.dueTo) } : {}),
+        },
+      });
+    }
+    if (f.status) and.push({ status: f.status });
+    else if (!f.includeDone) and.push({ status: { not: "DONE" } }); // default oculta Concluídas [decisão JP]
+    if (f.priority) and.push({ priority: f.priority });
+    if (f.assigneeId) {
+      and.push({ OR: [{ assigneeId: f.assigneeId }, { extraAssignees: { some: { userId: f.assigneeId } } }] });
+    }
+    const cap = f.limit ?? 500;
+    const rows = await this.db.task.findMany({
+      where: { orgId, deletedAt: null, ...(and.length ? { AND: and } : {}) }, // orgId sempre cerca o tenant [RF-A3]
+      orderBy: [{ dueDate: { sort: "asc", nulls: "last" } }, { id: "asc" }], // total, determinística [RF-A7]
+      take: cap + 1, // +1 detecta truncamento sem cursor
+      include: withExtras,
+    });
+    const hasMore = rows.length > cap;
+    return { tasks: rows.slice(0, cap).map(toTask), hasMore };
   }
   async update(id: string, patch: TaskPatch): Promise<TaskRecord> {
     const updated = await this.db.task.update({

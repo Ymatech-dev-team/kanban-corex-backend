@@ -129,6 +129,20 @@ describe("projetos + acesso por cliente (5a)", () => {
     );
   });
 
+  it("GET /members/accessible → pessoas dos clientes acessíveis (id+nome, dedup)", async () => {
+    const res = await req("GET", "/members/accessible", "u1");
+    expect(res.statusCode).toBe(200);
+    const members = res.json().members as { id: string; name: string }[];
+    expect(members).toEqual(
+      expect.arrayContaining([
+        { id: "u1", name: "Ana" },
+        { id: "u2", name: "Bruno" },
+      ]),
+    );
+    // sem dados sensíveis (só id + name)
+    expect(Object.keys(members[0]).sort()).toEqual(["id", "name"]);
+  });
+
   it("u2 com acesso + projetos.editar → PATCH 200", async () => {
     const res = await req("PATCH", `/projects/${projectId}`, "u2", { name: "Cliente ACME 2" });
     expect(res.statusCode).toBe(200);

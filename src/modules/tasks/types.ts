@@ -51,6 +51,18 @@ export interface TaskFilterOpts {
   assigneeId?: string;
   limit?: number;
   cursor?: string;
+  // filtros extras da visão global [tarefas-visao-global]
+  projectId?: string; // Cliente (intersecta o escopo acessível, nunca substitui)
+  engagementId?: string; // Projeto
+  dueFrom?: string; // ISO — prazo >=
+  dueTo?: string; // ISO — prazo <=
+  includeDone?: boolean; // false (default) oculta DONE quando não há status explícito
+}
+
+/** Resultado da listagem global: tarefas + sinal de truncamento. [tarefas-visao-global RF-A7] */
+export interface ListAllResult {
+  tasks: TaskRecord[];
+  hasMore: boolean;
 }
 
 export interface TaskRepo {
@@ -59,6 +71,8 @@ export interface TaskRepo {
   listByProject(projectId: string, orgId: string, filters: TaskFilterOpts): Promise<TaskRecord[]>;
   listByEngagement(engagementId: string, orgId: string, filters: TaskFilterOpts): Promise<TaskRecord[]>;
   listMine(userId: string, projectIds: string[] | "all", orgId: string, filters: TaskFilterOpts): Promise<TaskRecord[]>;
+  /** Visão global: todas as tarefas do escopo acessível (orgId sempre no WHERE), com filtros. [tarefas-visao-global] */
+  listAll(scope: string[] | "all", orgId: string, filters: TaskFilterOpts): Promise<ListAllResult>;
   update(id: string, patch: TaskPatch): Promise<TaskRecord>;
   move(id: string, status: TaskStatus, position: number): Promise<TaskRecord>;
   softDelete(id: string): Promise<void>;

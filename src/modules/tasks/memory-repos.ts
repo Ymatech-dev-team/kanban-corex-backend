@@ -5,6 +5,7 @@ import type {
   CommentRecord,
   CommentRepo,
   FeedCursor,
+  ListAllResult,
   NewActivity,
   NewComment,
   NewTask,
@@ -93,6 +94,37 @@ export class InMemoryTaskRepo implements TaskRepo {
         (projectIds === "all" || projectIds.includes(t.projectId)),
     );
     return sortAndPage(applyFilters(list, mineFilter), mineFilter).map(clone);
+  }
+  async listAll(scope: string[] | "all", orgId: string, f: TaskFilterOpts): Promise<ListAllResult> {
+    const from = f.dueFrom ? new Date(f.dueFrom).getTime() : null;
+    const to = f.dueTo ? new Date(f.dueTo).getTime() : null;
+    const list = [...this.byId.values()].filter((t) => {
+      if (t.orgId !== orgId || t.deletedAt) return false; // orgId sempre cerca o tenant [RF-A3]
+      if (scope !== "all" && !scope.includes(t.projectId)) return false; // escopo acessível [RF-A4]
+      if (f.projectId && t.projectId !== f.projectId) return false; // Cliente (intersecta)
+      if (f.engagementId && t.engagementId !== f.engagementId) return false; // Projeto
+      if (f.priority && t.priority !== f.priority) return false;
+      if (f.assigneeId && !(t.assigneeId === f.assigneeId || t.extraAssigneeIds.includes(f.assigneeId))) return false;
+      if (f.status) {
+        if (t.status !== f.status) return false;
+      } else if (!f.includeDone && t.status === "DONE") {
+        return false; // default oculta Concluídas [decisão JP]
+      }
+      if (from != null || to != null) {
+        if (t.dueDate == null) return false; // range de prazo exclui sem-prazo (igual ao Prisma gte/lte)
+        const d = t.dueDate.getTime();
+        if (from != null && d < from) return false;
+        if (to != null && d > to) return false;
+      }
+      return true;
+    });
+    const sorted = list.sort((a, b) => {
+      const da = a.dueDate ? a.dueDate.getTime() : Infinity; // sem-prazo por último [RF-A7]
+      const db = b.dueDate ? b.dueDate.getTime() : Infinity;
+      return da - db || (a.id < b.id ? -1 : 1);
+    });
+    const cap = f.limit ?? 500;
+    return { tasks: sorted.slice(0, cap).map(clone), hasMore: sorted.length > cap };
   }
   async update(id: string, patch: TaskPatch): Promise<TaskRecord> {
     const t = this.byId.get(id);

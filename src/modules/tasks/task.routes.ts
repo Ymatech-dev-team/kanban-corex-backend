@@ -12,6 +12,7 @@ import {
   activityFiltersSchema,
   createCommentSchema,
   editCommentSchema,
+  listAllTasksFiltersSchema,
   PERMISSIONS,
 } from "@sistema-tasks/contracts";
 import type { Authenticate } from "../authz/authenticate.js";
@@ -60,10 +61,16 @@ export function makeTaskRoutes(authenticate: Authenticate, authz: Authorizer, se
       },
     );
 
-    // rota estática ANTES da param (find-my-way prioriza estática, mas deixamos explícito)
+    // rotas estáticas ANTES da param (find-my-way prioriza estática, mas deixamos explícito)
     r.get("/tasks/mine", { preHandler: authenticate, schema: { querystring: taskFiltersSchema } }, async (req) => {
       const { tasks } = await service.listMine(req.session!, req.query);
       return { tasks: await redactCostList(tasks, req.session!, authz) }; // cruza clientes → custos.ver por projeto
+    });
+
+    // Visão global: todas as tarefas do escopo acessível, com filtros. [tarefas-visao-global]
+    r.get("/tasks", { preHandler: authenticate, schema: { querystring: listAllTasksFiltersSchema } }, async (req) => {
+      const { tasks, hasMore } = await service.listAll(req.session!, req.query);
+      return { tasks: await redactCostList(tasks, req.session!, authz), hasMore };
     });
 
     r.get("/tasks/:id", { preHandler: authenticate, schema: { params: idParams } }, async (req) => {

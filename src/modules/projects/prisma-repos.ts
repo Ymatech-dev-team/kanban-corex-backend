@@ -88,6 +88,20 @@ export class PrismaProjectAccessRepo implements ProjectAccessRepo {
     });
     return rows.map((r) => ({ id: r.user.id, name: r.user.name }));
   }
+  async listAccessibleMembers(projectIds: string[] | "all", orgId: string): Promise<ProjectMemberView[]> {
+    if (projectIds !== "all" && projectIds.length === 0) return [];
+    const rows = await this.db.projectMember.findMany({
+      where: {
+        user: { deletedAt: null },
+        project: { orgId, deletedAt: null }, // cerca o tenant [tarefas-visao-global]
+        ...(projectIds === "all" ? {} : { projectId: { in: projectIds } }),
+      },
+      select: { user: { select: { id: true, name: true } } },
+      distinct: ["userId"],
+      orderBy: { user: { name: "asc" } },
+    });
+    return rows.map((r) => ({ id: r.user.id, name: r.user.name }));
+  }
   async nullAssigneesInProject(projectId: string, userId: string): Promise<void> {
     // Revogar acesso: o usuário sai como responsável (principal E extra) de todas as tarefas do cliente.
     // Onde era o PRINCIPAL, promove o extra mais antigo remanescente (senão a tarefa ficaria órfã com

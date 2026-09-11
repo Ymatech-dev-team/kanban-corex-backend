@@ -42,6 +42,30 @@ export const taskFiltersSchema = z.object({
 });
 export type TaskFilters = z.infer<typeof taskFiltersSchema>;
 
+/**
+ * Filtros da visão GLOBAL (GET /tasks). Estende o core compartilhado com cliente/projeto/prazo.
+ * NÃO reusar nas rotas estreitas (/projects, /engagements, /mine) — elas seguem no taskFiltersSchema. [tarefas-visao-global RF-A9]
+ * `includeDone` default false → sem status e sem includeDone, o backend oculta DONE (mostra A fazer + Fazendo). [decisão JP]
+ */
+export const listAllTasksFiltersSchema = taskFiltersSchema
+  .extend({
+    projectId: z.string().optional(), // Cliente
+    engagementId: z.string().optional(), // Projeto
+    dueFrom: z.string().datetime().optional(),
+    dueTo: z.string().datetime().optional(),
+    includeDone: z
+      .union([z.literal("true"), z.literal("false"), z.boolean()])
+      .optional()
+      .transform((v) => v === true || v === "true"),
+    limit: z.coerce.number().int().min(1).max(500).optional(),
+  })
+  .superRefine((v, ctx) => {
+    if (v.dueFrom && v.dueTo && new Date(v.dueFrom) > new Date(v.dueTo)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Intervalo de datas invertido (de > até)", path: ["dueTo"] });
+    }
+  });
+export type ListAllTasksFilters = z.infer<typeof listAllTasksFiltersSchema>;
+
 /** Adicionar um responsável EXTRA à tarefa (o principal fica em Task.assigneeId). [hierarquia/detalhe-tarefa A1] */
 export const addAssigneeSchema = z.object({
   userId: z.string().min(1).max(64),

@@ -40,6 +40,8 @@ export interface ProjectAccessRepo {
   grant(projectId: string, userId: string): Promise<void>;
   revoke(projectId: string, userId: string): Promise<void>;
   listMembers(projectId: string): Promise<ProjectMemberView[]>;
+  /** Pessoas distintas (id+nome) dos clientes no escopo (orgId sempre cerca o tenant). [tarefas-visao-global] */
+  listAccessibleMembers(projectIds: string[] | "all", orgId: string): Promise<ProjectMemberView[]>;
   /** Ao revogar acesso, tarefas onde o usuário era responsável ficam sem responsável. [SEC-110] */
   nullAssigneesInProject(projectId: string, userId: string): Promise<void>;
   userExistsInOrg(userId: string, orgId: string): Promise<boolean>;

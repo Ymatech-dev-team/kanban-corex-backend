@@ -58,6 +58,11 @@ export function makeProjectRoutes(
       },
     );
 
+    // Pessoas dos clientes acessíveis (id+nome) — filtro de Responsável da visão global. [tarefas-visao-global]
+    r.get("/members/accessible", { preHandler: authenticate }, async (req) => {
+      return { members: await service.listAccessibleMembers(req.session!) };
+    });
+
     r.post(
       "/projects/:id/members/:userId",
       { preHandler: authenticate, schema: { params: memberParams } },

@@ -74,6 +74,21 @@ export class InMemoryProjectAccessRepo implements ProjectAccessRepo {
       .map((id) => ({ id, name: this.users.get(id)?.name ?? id }))
       .sort((a, b) => a.name.localeCompare(b.name));
   }
+  async listAccessibleMembers(projectIds: string[] | "all", orgId: string): Promise<ProjectMemberView[]> {
+    const inScope = (pid: string) => projectIds === "all" || projectIds.includes(pid);
+    const ids = new Set<string>();
+    for (const k of this.access) {
+      const idx = k.indexOf(":");
+      const userId = k.slice(0, idx);
+      const projectId = k.slice(idx + 1);
+      if (!inScope(projectId)) continue;
+      if (this.users.get(userId)?.orgId !== orgId) continue; // cerca o tenant
+      ids.add(userId);
+    }
+    return [...ids]
+      .map((id) => ({ id, name: this.users.get(id)?.name ?? id }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }
   async nullAssigneesInProject(projectId: string, userId: string): Promise<void> {
     this.nulled.push({ projectId, userId });
   }

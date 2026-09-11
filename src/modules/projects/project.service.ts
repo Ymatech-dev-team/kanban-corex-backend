@@ -59,6 +59,14 @@ export class ProjectService {
     return this.access.listMembers(id);
   }
 
+  /** Pessoas dos clientes que o usuário acessa (id+nome) — fonte do filtro de Responsável da visão global. [tarefas-visao-global] */
+  async listAccessibleMembers(session: SessionContext): Promise<ProjectMemberView[]> {
+    const scope = session.permissions.has(PERMISSIONS.projetos_acessar_todos)
+      ? "all"
+      : await this.access.listAccessibleProjectIds(session.userId);
+    return this.access.listAccessibleMembers(scope, session.orgId);
+  }
+
   async grantAccess(session: SessionContext, projectId: string, userId: string): Promise<void> {
     await this.getOrThrow(session, projectId);
     if (!(await this.access.userExistsInOrg(userId, session.orgId))) {

@@ -14,6 +14,7 @@ import type {
   FeedCursor,
   FeedItem,
   FeedPage,
+  ListAllResult,
   SubtaskRepo,
   TaskFilterOpts,
   TaskPatch,
@@ -346,12 +347,23 @@ export class TaskService {
     return { tasks: await this.tasks.listByEngagement(engagementId, orgId, filters) };
   }
 
+  /** Escopo de leitura do usuário: "all" (acessar_todos) ou a lista de clientes acessíveis. [SEC-107] */
+  private async resolveScope(session: SessionContext): Promise<"all" | string[]> {
+    return session.permissions.has(PERMISSIONS.projetos_acessar_todos)
+      ? "all"
+      : this.access.listAccessibleProjectIds(session.userId);
+  }
+
   /** "Minhas tarefas" — SEMPRE interseccionado com os projetos acessíveis. [SEC-107] */
   async listMine(session: SessionContext, filters: TaskFilterOpts): Promise<{ tasks: TaskRecord[] }> {
-    const projectIds = session.permissions.has(PERMISSIONS.projetos_acessar_todos)
-      ? ("all" as const)
-      : await this.access.listAccessibleProjectIds(session.userId);
-    return { tasks: await this.tasks.listMine(session.userId, projectIds, session.orgId, filters) };
+    const scope = await this.resolveScope(session);
+    return { tasks: await this.tasks.listMine(session.userId, scope, session.orgId, filters) };
+  }
+
+  /** Visão global: todas as tarefas do escopo acessível, com filtros. orgId sempre cercado no repo. [tarefas-visao-global] */
+  async listAll(session: SessionContext, filters: TaskFilterOpts): Promise<ListAllResult> {
+    const scope = await this.resolveScope(session);
+    return this.tasks.listAll(scope, session.orgId, filters);
   }
 
   // ---- subtarefas ----
