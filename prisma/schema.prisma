@@ -102,6 +102,7 @@ model Project {
   tasks        Task[]
   members      ProjectMember[]
   engagements  Engagement[]
+  filterPresets BoardFilterPreset[]
 
   @@unique([id, orgId]) // habilita a FK composta de integridade de tenant [ARQ]
   @@index([orgId])
@@ -230,6 +231,25 @@ model TaskActivity {
 
   @@index([taskId, createdAt(sort: Desc), id])
   @@map("task_activity")
+}
+
+// Preset de filtro do board, por usuário e por cliente (Project). Payload dos filtros em JSONB. [filtros-salvos-board]
+model BoardFilterPreset {
+  id        String    @id @default(cuid())
+  orgId     String
+  projectId String // Cliente dono do preset
+  userId    String // dono (privado por usuário)
+  name      String
+  filters   Json // { resp?, status?, prio?, prazo? } — lido inteiro, nunca em SQL dinâmico
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  // FK composta (project, org) — coerência de tenant; cascade se o cliente for hard-deleted.
+  project Project @relation(fields: [projectId, orgId], references: [id, orgId], onDelete: Cascade)
+
+  @@unique([orgId, projectId, userId, name]) // 1 nome por (org, cliente, usuário)
+  @@index([orgId, projectId, userId])
+  @@map("board_filter_preset")
 }
 
 // Comentário manual da tarefa: mutável (editar/excluir do autor), soft-delete. [detalhe-tarefa C/A2]

@@ -42,6 +42,9 @@ import { makeEngagementRoutes } from "./modules/engagements/engagement.routes.js
 import { NotificationService } from "./modules/notifications/notification.service.js";
 import { PrismaNotificationRepo } from "./modules/notifications/prisma-repo.js";
 import { makeNotificationRoutes } from "./modules/notifications/notification.routes.js";
+import { BoardFilterService } from "./modules/board-filters/board-filter.service.js";
+import { PrismaBoardFilterRepo } from "./modules/board-filters/prisma-repo.js";
+import { makeBoardFilterRoutes } from "./modules/board-filters/board-filter.routes.js";
 
 export interface AppDeps {
   authService?: AuthService;
@@ -55,6 +58,7 @@ export interface AppDeps {
   costService?: CostService;
   engagementService?: EngagementService;
   notificationService?: NotificationService;
+  boardFilterService?: BoardFilterService;
 }
 
 function tokenConfigFromEnv(): TokenConfig {
@@ -133,6 +137,7 @@ export function buildApp(deps: AppDeps = {}): FastifyInstance {
   let costService = deps.costService;
   let engagementService = deps.engagementService;
   let notificationService = deps.notificationService;
+  let boardFilterService = deps.boardFilterService;
   if (process.env.DATABASE_URL) {
     tokenService = tokenService ?? new TokenService(tokenConfigFromEnv());
     const db = getPrisma();
@@ -165,6 +170,7 @@ export function buildApp(deps: AppDeps = {}): FastifyInstance {
       engagementService ?? new EngagementService(new PrismaEngagementRepo(db), engagementMemberRepo, accessRepo);
     notificationService =
       notificationService ?? new NotificationService(new PrismaNotificationRepo(db), accessRepo);
+    boardFilterService = boardFilterService ?? new BoardFilterService(new PrismaBoardFilterRepo(db));
   }
 
   if (authService && tokenService) {
@@ -193,6 +199,9 @@ export function buildApp(deps: AppDeps = {}): FastifyInstance {
   }
   if (authenticate && notificationService) {
     typed.register(makeNotificationRoutes(authenticate, notificationService));
+  }
+  if (authenticate && authorizer && boardFilterService) {
+    typed.register(makeBoardFilterRoutes(authenticate, authorizer, boardFilterService));
   }
 
   return app;
