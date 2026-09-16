@@ -39,6 +39,9 @@ import { makeCostRoutes } from "./modules/cost/cost.routes.js";
 import { EngagementService } from "./modules/engagements/engagement.service.js";
 import { PrismaEngagementRepo, PrismaEngagementMemberRepo } from "./modules/engagements/prisma-repos.js";
 import { makeEngagementRoutes } from "./modules/engagements/engagement.routes.js";
+import { NotificationService } from "./modules/notifications/notification.service.js";
+import { PrismaNotificationRepo } from "./modules/notifications/prisma-repo.js";
+import { makeNotificationRoutes } from "./modules/notifications/notification.routes.js";
 
 export interface AppDeps {
   authService?: AuthService;
@@ -51,6 +54,7 @@ export interface AppDeps {
   roleService?: RoleService;
   costService?: CostService;
   engagementService?: EngagementService;
+  notificationService?: NotificationService;
 }
 
 function tokenConfigFromEnv(): TokenConfig {
@@ -128,6 +132,7 @@ export function buildApp(deps: AppDeps = {}): FastifyInstance {
   let roleService = deps.roleService;
   let costService = deps.costService;
   let engagementService = deps.engagementService;
+  let notificationService = deps.notificationService;
   if (process.env.DATABASE_URL) {
     tokenService = tokenService ?? new TokenService(tokenConfigFromEnv());
     const db = getPrisma();
@@ -158,6 +163,8 @@ export function buildApp(deps: AppDeps = {}): FastifyInstance {
     costService = costService ?? new CostService(new PrismaOrgRepo(db), new PrismaCostRepo(db));
     engagementService =
       engagementService ?? new EngagementService(new PrismaEngagementRepo(db), engagementMemberRepo, accessRepo);
+    notificationService =
+      notificationService ?? new NotificationService(new PrismaNotificationRepo(db), accessRepo);
   }
 
   if (authService && tokenService) {
@@ -183,6 +190,9 @@ export function buildApp(deps: AppDeps = {}): FastifyInstance {
   }
   if (authenticate && authorizer && engagementService && taskService && costService) {
     typed.register(makeEngagementRoutes(authenticate, authorizer, engagementService, taskService, costService));
+  }
+  if (authenticate && notificationService) {
+    typed.register(makeNotificationRoutes(authenticate, notificationService));
   }
 
   return app;
