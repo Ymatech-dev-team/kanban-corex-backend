@@ -282,6 +282,17 @@ export class TaskService {
     await this.tasks.softDelete(id, session.orgId, randomUUID()); // batch pro undo restaurar por lote
   }
 
+  /** Carrega as tarefas ativas (id+projectId) pro bulk — a rota autoriza por projeto antes de excluir. [acoes-em-massa] */
+  async findManyForBulk(session: SessionContext, ids: string[]): Promise<Array<{ id: string; projectId: string }>> {
+    return this.tasks.findManyByIds(ids, session.orgId);
+  }
+
+  /** Exclui várias como UM lote (um deletionBatchId → um Desfazer via restore). Retorna quantas foram. */
+  async bulkSoftDelete(session: SessionContext, ids: string[]): Promise<number> {
+    if (ids.length === 0) return 0;
+    return this.tasks.softDeleteMany(ids, session.orgId, randomUUID());
+  }
+
   /** Carrega a tarefa (mesmo excluída) pro restore — a rota precisa do projectId pra autorizar. */
   async getAnyForRestore(
     session: SessionContext,
@@ -290,6 +301,11 @@ export class TaskService {
     const row = await this.tasks.findAnyById(id, session.orgId);
     if (!row) throw new AppError("NAO_ENCONTRADO", "Recurso não encontrado");
     return row;
+  }
+
+  /** Clientes distintos de um lote de exclusão — a rota reautoriza cada um antes de restaurar. [acoes-em-massa sec] */
+  async batchProjectIds(session: SessionContext, batchId: string): Promise<string[]> {
+    return this.tasks.findBatchProjectIds(batchId, session.orgId);
   }
 
   /** Desfaz a exclusão: restaura o lote. Idempotente (já ativo = no-op). Bloqueia órfão (pai excluído). */

@@ -186,6 +186,22 @@ export class PrismaTaskRepo implements TaskRepo {
       data: { deletedAt: new Date(), deletionBatchId: batchId },
     });
   }
+  async findManyByIds(ids: string[], orgId: string): Promise<Array<{ id: string; projectId: string }>> {
+    if (ids.length === 0) return [];
+    return this.db.task.findMany({
+      where: { id: { in: ids }, orgId, deletedAt: null }, // só ativas; orgId cerca o tenant [acoes-em-massa]
+      select: { id: true, projectId: true },
+    });
+  }
+  async softDeleteMany(ids: string[], orgId: string, batchId: string): Promise<number> {
+    if (ids.length === 0) return 0;
+    // UM updateMany, UM batchId → o undo restaura o lote inteiro por deletionBatchId. [acoes-em-massa]
+    const res = await this.db.task.updateMany({
+      where: { id: { in: ids }, orgId, deletedAt: null },
+      data: { deletedAt: new Date(), deletionBatchId: batchId },
+    });
+    return res.count;
+  }
   async findAnyById(
     id: string,
     orgId: string,
@@ -200,6 +216,14 @@ export class PrismaTaskRepo implements TaskRepo {
       where: { orgId, deletionBatchId: batchId, deletedAt: { not: null } },
       data: { deletedAt: null, deletionBatchId: null },
     });
+  }
+  async findBatchProjectIds(batchId: string, orgId: string): Promise<string[]> {
+    const rows = await this.db.task.findMany({
+      where: { orgId, deletionBatchId: batchId },
+      select: { projectId: true },
+      distinct: ["projectId"],
+    });
+    return rows.map((r) => r.projectId);
   }
   async areParentsActive(engagementId: string, projectId: string, orgId: string): Promise<boolean> {
     const [eng, proj] = await Promise.all([

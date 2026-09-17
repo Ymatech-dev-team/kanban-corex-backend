@@ -154,6 +154,24 @@ export class InMemoryTaskRepo implements TaskRepo {
       this.batch.set(id, batchId);
     }
   }
+  async findManyByIds(ids: string[], orgId: string): Promise<Array<{ id: string; projectId: string }>> {
+    const set = new Set(ids);
+    return [...this.byId.values()]
+      .filter((t) => set.has(t.id) && t.orgId === orgId && !t.deletedAt)
+      .map((t) => ({ id: t.id, projectId: t.projectId }));
+  }
+  async softDeleteMany(ids: string[], orgId: string, batchId: string): Promise<number> {
+    let count = 0;
+    for (const id of ids) {
+      const t = this.byId.get(id);
+      if (t && t.orgId === orgId && !t.deletedAt) {
+        t.deletedAt = new Date();
+        this.batch.set(id, batchId);
+        count++;
+      }
+    }
+    return count;
+  }
   async findAnyById(
     id: string,
     orgId: string,
@@ -171,6 +189,16 @@ export class InMemoryTaskRepo implements TaskRepo {
         this.batch.delete(id);
       }
     }
+  }
+  async findBatchProjectIds(batchId: string, orgId: string): Promise<string[]> {
+    const s = new Set<string>();
+    for (const [id, b] of this.batch) {
+      if (b === batchId) {
+        const t = this.byId.get(id);
+        if (t && t.orgId === orgId) s.add(t.projectId);
+      }
+    }
+    return [...s];
   }
   async areParentsActive(_engagementId: string, _projectId: string, _orgId: string): Promise<boolean> {
     return true; // stub de teste: o in-memory não modela exclusão dos pais

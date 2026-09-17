@@ -77,6 +77,10 @@ export interface TaskRepo {
   move(id: string, status: TaskStatus, position: number): Promise<TaskRecord>;
   /** Soft-delete: grava deletedAt + deletionBatchId (batch da exclusão, pro undo restaurar por lote). */
   softDelete(id: string, orgId: string, batchId: string): Promise<void>;
+  /** Carrega várias tarefas ATIVAS por id (pro bulk). Só {id, projectId}; orgId cerca o tenant. [acoes-em-massa] */
+  findManyByIds(ids: string[], orgId: string): Promise<Array<{ id: string; projectId: string }>>;
+  /** Soft-delete em lote: UM updateMany, UM batchId (→ um Desfazer). Retorna quantas foram marcadas. */
+  softDeleteMany(ids: string[], orgId: string, batchId: string): Promise<number>;
   /** Busca IGNORANDO o filtro deletedAt (pro restore ler o batch e os pais). orgId cerca o tenant. */
   findAnyById(
     id: string,
@@ -84,6 +88,8 @@ export interface TaskRepo {
   ): Promise<{ id: string; projectId: string; engagementId: string; deletedAt: Date | null; deletionBatchId: string | null } | null>;
   /** Reativa as tarefas daquele lote (só as ainda excluídas). Idempotente. */
   restoreBatch(batchId: string, orgId: string): Promise<void>;
+  /** Clientes (projectId) distintos das tarefas daquele lote — o restore reautoriza CADA um. [acoes-em-massa sec] */
+  findBatchProjectIds(batchId: string, orgId: string): Promise<string[]>;
   /** Projeto (engagement) E cliente (project) pais estão ativos? (bloqueia restaurar órfão). */
   areParentsActive(engagementId: string, projectId: string, orgId: string): Promise<boolean>;
   maxPositionByEngagement(engagementId: string, status: TaskStatus): Promise<number>;

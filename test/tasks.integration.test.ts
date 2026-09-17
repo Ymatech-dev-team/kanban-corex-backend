@@ -176,3 +176,66 @@ describe("tarefas (5b)", () => {
     expect(after.json().tasks).toHaveLength(0);
   });
 });
+
+describe("excluir em lote (ações em massa)", () => {
+  let ids: string[] = [];
+
+  it("u1 cria 3 tarefas do lote", async () => {
+    ids = [];
+    for (const t of ["Lote A", "Lote B", "Lote C"]) {
+      const res = await call("POST", `/projects/${P}/tasks`, "u1", { title: t });
+      expect(res.statusCode).toBe(200);
+      ids.push(res.json().id);
+    }
+    expect(ids).toHaveLength(3);
+  });
+
+  it("u2 sem permissão de excluir → 403 (nenhuma autorizada)", async () => {
+    const res = await call("POST", `/tasks/bulk-delete`, "u2", { ids });
+    expect(res.statusCode).toBe(403);
+  });
+
+  it("body vazio → 400 (zod exige min 1)", async () => {
+    const res = await call("POST", `/tasks/bulk-delete`, "u1", { ids: [] });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it("u1 exclui as 3 como UM lote → deletedCount 3 e somem da listagem", async () => {
+    const res = await call("POST", `/tasks/bulk-delete`, "u1", { ids });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().deletedCount).toBe(3);
+    expect([...res.json().deletedIds].sort()).toEqual([...ids].sort());
+    const list = await call("GET", `/projects/${P}/tasks`, "u1");
+    const listed = list.json().tasks.map((t: { id: string }) => t.id);
+    for (const id of ids) expect(listed).not.toContain(id);
+  });
+
+  it("Desfazer a partir de UM id restaura o lote inteiro", async () => {
+    const res = await call("POST", `/tasks/${ids[0]}/restore`, "u1");
+    expect(res.statusCode).toBe(200);
+    const list = await call("GET", `/projects/${P}/tasks`, "u1");
+    const listed = list.json().tasks.map((t: { id: string }) => t.id);
+    for (const id of ids) expect(listed).toContain(id);
+  });
+
+  it("id inexistente é ignorado (best-effort), não conta no deletedCount", async () => {
+    const res = await call("POST", `/tasks/bulk-delete`, "u1", { ids: [...ids, "nao-existe"] });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().deletedCount).toBe(3);
+    expect(res.json().deletedIds).not.toContain("nao-existe");
+  });
+
+  it("Desfazer de lote cross-cliente exige permissão em TODOS os clientes do lote", async () => {
+    access.grant("p2", "u1");
+    const a = (await call("POST", `/projects/${P}/tasks`, "u1", { title: "cross A" })).json().id;
+    const b = (await call("POST", `/projects/p2/tasks`, "u1", { title: "cross B" })).json().id;
+    const del = await call("POST", `/tasks/bulk-delete`, "u1", { ids: [a, b] });
+    expect(del.statusCode).toBe(200);
+    expect(del.json().deletedCount).toBe(2); // um único lote tocando P e p2
+    // u1 perde acesso a p2 → restaurar por um id de P é BARRADO (o lote reativa também p2).
+    // Authorizer devolve 404 quando tem a permissão mas não é membro do cliente (SEC-105, não confirma existência).
+    access.revoke("p2", "u1");
+    const res = await call("POST", `/tasks/${a}/restore`, "u1");
+    expect(res.statusCode).toBe(404);
+  });
+});

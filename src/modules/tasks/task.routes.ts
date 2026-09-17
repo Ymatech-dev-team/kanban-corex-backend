@@ -24,6 +24,8 @@ import type { TaskRecord } from "./types.js";
 
 const projectParams = z.object({ projectId: z.string().min(1) });
 const idParams = z.object({ id: z.string().min(1) });
+/** Body do excluir-em-lote: teto de 100 ids (bulk é ação grosseira, não migração). [acoes-em-massa] */
+const bulkDeleteBody = z.object({ ids: z.array(z.string().min(1).max(64)).min(1).max(100) });
 
 function header(req: FastifyRequest, name: string): string | undefined {
   const v = req.headers[name];
@@ -169,10 +171,37 @@ export function makeTaskRoutes(authenticate: Authenticate, authz: Authorizer, se
       return { ok: true };
     });
 
+    // Excluir em lote (ações em massa). Best-effort: carrega as ativas, autoriza POR PROJETO (lote de um
+    // cliente = 1 checagem), exclui só as autorizadas como UM batch (→ um Desfazer via /restore). [acoes-em-massa]
+    r.post(
+      "/tasks/bulk-delete",
+      { preHandler: authenticate, schema: { body: bulkDeleteBody } },
+      async (req) => {
+        const ids = [...new Set(req.body.ids)]; // dedup defensivo
+        const tasks = await service.findManyForBulk(req.session!, ids); // {id, projectId} só ativas, orgId cercado
+        const projectIds = [...new Set(tasks.map((t) => t.projectId))];
+        const allowed = new Set<string>();
+        for (const pid of projectIds) {
+          if (await authz.can(req.session!, PERMISSIONS.tarefas_excluir, pid)) allowed.add(pid);
+        }
+        const okIds = tasks.filter((t) => allowed.has(t.projectId)).map((t) => t.id);
+        if (okIds.length === 0) throw new AppError("SEM_PERMISSAO", "Você não pode excluir estas tarefas");
+        const deletedCount = await service.bulkSoftDelete(req.session!, okIds);
+        return { deletedCount, deletedIds: okIds };
+      },
+    );
+
     // Desfazer a exclusão (undo). Mesma permissão do delete; carrega a tarefa (mesmo excluída) pro authz.
     r.post("/tasks/:id/restore", { preHandler: authenticate, schema: { params: idParams } }, async (req) => {
       const row = await service.getAnyForRestore(req.session!, req.params.id);
-      await authz.assertCan(req.session!, PERMISSIONS.tarefas_excluir, row.projectId);
+      if (row.deletionBatchId) {
+        // restaura o LOTE inteiro → exige tarefas_excluir em CADA cliente do lote, não só no do id.
+        // (bulk pode ter tocado vários clientes; sem isso, dava pra reativar cliente sem acesso). [sec review]
+        const projectIds = await service.batchProjectIds(req.session!, row.deletionBatchId);
+        for (const pid of projectIds) await authz.assertCan(req.session!, PERMISSIONS.tarefas_excluir, pid);
+      } else {
+        await authz.assertCan(req.session!, PERMISSIONS.tarefas_excluir, row.projectId);
+      }
       await service.restore(req.session!, row);
       return { ok: true };
     });
