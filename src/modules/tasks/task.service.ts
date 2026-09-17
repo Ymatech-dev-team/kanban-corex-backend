@@ -186,6 +186,11 @@ export class TaskService {
     await this.assertAssigneeAccess(input.assigneeId ?? null, projectId);
     // Sem engagement explícito (endpoint antigo por cliente), cai no "Projeto geral" do cliente. [hierarquia-projetos]
     const targetEngagement = engagementId ?? generalEngagementId(projectId);
+    // Guarda de pai excluído: não deixa criar tarefa órfã sob cliente/projeto soft-deletado (UI stale ou
+    // API direta) — a rota por-cliente não carrega o engagement, então checa aqui. [chip create-under-deleted]
+    if (!(await this.tasks.areParentsActive(targetEngagement, projectId, session.orgId))) {
+      throw new AppError("VALIDACAO", "Não é possível criar: o cliente ou o projeto foi excluído");
+    }
     const status: TaskStatus = input.status ?? "TODO";
     const { result } = await withIdempotency(this.idempotency, idempotencyKey, session.userId, async () => {
       const position = (await this.tasks.maxPositionByEngagement(targetEngagement, status)) + 1;
