@@ -146,7 +146,9 @@ export function makeTaskRoutes(authenticate: Authenticate, authz: Authorizer, se
         const cost = await canSeeCost(req, task.projectId);
         // sem custos.ver: ignora estimatedMinutes (undefined = Prisma não toca) — não seta NEM apaga
         const patch = cost ? req.body : { ...req.body, estimatedMinutes: undefined };
-        const updated = await service.update(req.session!, task, patch, header(req, "if-unmodified-since"));
+        // token de concorrência via header customizado (o `If-Unmodified-Since` reservado é barrado
+        // pelo edge da Vercel com 412 antes de chegar aqui). [fix 412]
+        const updated = await service.update(req.session!, task, patch, header(req, "x-expected-updated-at"));
         return redactCost(updated, cost);
       },
     );
