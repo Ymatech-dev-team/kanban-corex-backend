@@ -54,6 +54,14 @@ export class ProjectService {
     await this.projects.softDeleteWithTasks(id, randomUUID());
   }
 
+  /** Desfaz a exclusão do cliente: restaura o lote (cliente + projetos + tarefas). Idempotente (já ativo = no-op). */
+  async restore(session: SessionContext, id: string): Promise<void> {
+    const row = await this.projects.findAnyById(id, session.orgId);
+    if (!row) throw new AppError("NAO_ENCONTRADO", "Recurso não encontrado");
+    if (!row.deletedAt || !row.deletionBatchId) return; // já ativo → no-op sucesso
+    await this.projects.restoreBatch(row.deletionBatchId, session.orgId);
+  }
+
   async listMembers(session: SessionContext, id: string): Promise<ProjectMemberView[]> {
     await this.getOrThrow(session, id);
     return this.access.listMembers(id);

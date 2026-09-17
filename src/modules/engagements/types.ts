@@ -37,6 +37,15 @@ export interface EngagementRepo {
   update(id: string, data: { name?: string; description?: string | null }): Promise<EngagementRecord>;
   softDeleteWithTasks(id: string, batchId: string): Promise<void>;
   countActiveByProject(projectId: string, orgId: string): Promise<number>;
+  /** Busca IGNORANDO deletedAt (pro restore ler o lote e o cliente pai). orgId cerca o tenant. */
+  findAnyById(
+    id: string,
+    orgId: string,
+  ): Promise<{ id: string; projectId: string; deletedAt: Date | null; deletionBatchId: string | null } | null>;
+  /** Reativa o projeto + suas tarefas daquele lote (só os ainda excluídos). Idempotente. */
+  restoreBatch(batchId: string, orgId: string): Promise<void>;
+  /** O cliente (project) pai está ativo? (bloqueia restaurar projeto órfão). */
+  isProjectActive(projectId: string, orgId: string): Promise<boolean>;
 }
 
 export interface EngagementMemberRepo {

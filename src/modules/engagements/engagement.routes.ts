@@ -74,6 +74,14 @@ export function makeEngagementRoutes(
       return { ok: true };
     });
 
+    // Desfazer a exclusão do projeto (undo). Mesma permissão do delete.
+    r.post("/engagements/:id/restore", { preHandler: authenticate, schema: { params: idParams } }, async (req) => {
+      const row = await engagements.getAnyForRestore(req.session!, req.params.id);
+      await authz.assertCan(req.session!, PERMISSIONS.engagements_excluir, row.projectId);
+      await engagements.restore(req.session!, row);
+      return { ok: true };
+    });
+
     // ---- consultores ----
     r.get("/engagements/:id/consultores", { preHandler: authenticate, schema: { params: idParams } }, async (req) => {
       const eng = await engagements.getOrThrow(req.session!, req.params.id);

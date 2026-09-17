@@ -25,6 +25,13 @@ export interface ProjectRepo {
   update(id: string, data: { name?: string; description?: string | null }): Promise<ProjectRecord>;
   /** Soft-delete do projeto + cascata nas tarefas, marcando o mesmo deletionBatchId. [JOR-2c] */
   softDeleteWithTasks(id: string, batchId: string): Promise<void>;
+  /** Busca IGNORANDO deletedAt (pro restore ler o lote). orgId cerca o tenant. */
+  findAnyById(
+    id: string,
+    orgId: string,
+  ): Promise<{ id: string; deletedAt: Date | null; deletionBatchId: string | null } | null>;
+  /** Reativa o cliente + seus projetos + tarefas daquele lote (só os ainda excluídos). Idempotente. */
+  restoreBatch(batchId: string, orgId: string): Promise<void>;
 }
 
 /** Membro de um cliente/projeto, o suficiente pra escolher responsável. */

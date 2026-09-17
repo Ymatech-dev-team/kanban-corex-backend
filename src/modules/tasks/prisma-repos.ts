@@ -179,8 +179,34 @@ export class PrismaTaskRepo implements TaskRepo {
     const updated = await this.db.task.update({ where: { id }, data: { status, position }, include: withExtras });
     return toTask(updated);
   }
-  async softDelete(id: string): Promise<void> {
-    await this.db.task.update({ where: { id }, data: { deletedAt: new Date() } });
+  async softDelete(id: string, orgId: string, batchId: string): Promise<void> {
+    // orgId no WHERE (cerca o tenant) + grava o lote da exclusão pro undo restaurar. [excluir-com-seguranca]
+    await this.db.task.updateMany({
+      where: { id, orgId, deletedAt: null },
+      data: { deletedAt: new Date(), deletionBatchId: batchId },
+    });
+  }
+  async findAnyById(
+    id: string,
+    orgId: string,
+  ): Promise<{ id: string; projectId: string; engagementId: string; deletedAt: Date | null; deletionBatchId: string | null } | null> {
+    return this.db.task.findFirst({
+      where: { id, orgId }, // SEM filtro deletedAt — precisa achar a excluída pro undo
+      select: { id: true, projectId: true, engagementId: true, deletedAt: true, deletionBatchId: true },
+    });
+  }
+  async restoreBatch(batchId: string, orgId: string): Promise<void> {
+    await this.db.task.updateMany({
+      where: { orgId, deletionBatchId: batchId, deletedAt: { not: null } },
+      data: { deletedAt: null, deletionBatchId: null },
+    });
+  }
+  async areParentsActive(engagementId: string, projectId: string, orgId: string): Promise<boolean> {
+    const [eng, proj] = await Promise.all([
+      this.db.engagement.findFirst({ where: { id: engagementId, orgId, deletedAt: null }, select: { id: true } }),
+      this.db.project.findFirst({ where: { id: projectId, orgId, deletedAt: null }, select: { id: true } }),
+    ]);
+    return eng !== null && proj !== null;
   }
   async maxPositionByEngagement(engagementId: string, status: TaskStatus): Promise<number> {
     const agg = await this.db.task.aggregate({

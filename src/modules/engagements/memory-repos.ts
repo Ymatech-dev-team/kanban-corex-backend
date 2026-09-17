@@ -11,6 +11,7 @@ import { isGeneralEngagement } from "./general.js";
 
 export class InMemoryEngagementRepo implements EngagementRepo {
   private byId = new Map<string, EngagementRecord>();
+  private batch = new Map<string, string>(); // id -> deletionBatchId
   // contagens opcionais só pra teste (não obrigatórias)
   taskCounts = new Map<string, number>();
   consultorCounts = new Map<string, number>();
@@ -58,13 +59,37 @@ export class InMemoryEngagementRepo implements EngagementRepo {
     e.updatedAt = new Date();
     return { ...e };
   }
-  async softDeleteWithTasks(id: string): Promise<void> {
+  async softDeleteWithTasks(id: string, batchId: string): Promise<void> {
     const e = this.byId.get(id);
-    if (e) e.deletedAt = new Date();
+    if (e) {
+      e.deletedAt = new Date();
+      this.batch.set(id, batchId);
+    }
   }
   async countActiveByProject(projectId: string, orgId: string): Promise<number> {
     return [...this.byId.values()].filter((e) => e.projectId === projectId && e.orgId === orgId && !e.deletedAt)
       .length;
+  }
+  async findAnyById(
+    id: string,
+    orgId: string,
+  ): Promise<{ id: string; projectId: string; deletedAt: Date | null; deletionBatchId: string | null } | null> {
+    const e = this.byId.get(id);
+    return e && e.orgId === orgId
+      ? { id: e.id, projectId: e.projectId, deletedAt: e.deletedAt, deletionBatchId: this.batch.get(id) ?? null }
+      : null;
+  }
+  async restoreBatch(batchId: string, orgId: string): Promise<void> {
+    for (const [id, b] of this.batch) {
+      const e = this.byId.get(id);
+      if (b === batchId && e && e.orgId === orgId && e.deletedAt) {
+        e.deletedAt = null;
+        this.batch.delete(id);
+      }
+    }
+  }
+  async isProjectActive(_projectId: string, _orgId: string): Promise<boolean> {
+    return true; // stub de teste: o in-memory não modela exclusão do cliente pai
   }
 }
 

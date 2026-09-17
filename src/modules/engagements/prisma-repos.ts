@@ -74,6 +74,34 @@ export class PrismaEngagementRepo implements EngagementRepo {
   async countActiveByProject(projectId: string, orgId: string): Promise<number> {
     return this.db.engagement.count({ where: { projectId, orgId, deletedAt: null } });
   }
+
+  async findAnyById(
+    id: string,
+    orgId: string,
+  ): Promise<{ id: string; projectId: string; deletedAt: Date | null; deletionBatchId: string | null } | null> {
+    return this.db.engagement.findFirst({
+      where: { id, orgId }, // SEM filtro deletedAt — pro undo
+      select: { id: true, projectId: true, deletedAt: true, deletionBatchId: true },
+    });
+  }
+
+  async restoreBatch(batchId: string, orgId: string): Promise<void> {
+    await this.db.$transaction([
+      this.db.engagement.updateMany({
+        where: { orgId, deletionBatchId: batchId, deletedAt: { not: null } },
+        data: { deletedAt: null, deletionBatchId: null },
+      }),
+      this.db.task.updateMany({
+        where: { orgId, deletionBatchId: batchId, deletedAt: { not: null } },
+        data: { deletedAt: null, deletionBatchId: null },
+      }),
+    ]);
+  }
+
+  async isProjectActive(projectId: string, orgId: string): Promise<boolean> {
+    const p = await this.db.project.findFirst({ where: { id: projectId, orgId, deletedAt: null }, select: { id: true } });
+    return p !== null;
+  }
 }
 
 export class PrismaEngagementMemberRepo implements EngagementMemberRepo {

@@ -64,6 +64,28 @@ export class EngagementService {
     await this.engagements.softDeleteWithTasks(engagement.id, randomUUID());
   }
 
+  /** Carrega o projeto (mesmo excluído) pro restore — a rota precisa do projectId (cliente) pra autorizar. */
+  async getAnyForRestore(
+    session: SessionContext,
+    id: string,
+  ): Promise<{ id: string; projectId: string; deletedAt: Date | null; deletionBatchId: string | null }> {
+    const row = await this.engagements.findAnyById(id, session.orgId);
+    if (!row) throw new AppError("NAO_ENCONTRADO", "Recurso não encontrado");
+    return row;
+  }
+
+  /** Desfaz a exclusão do projeto: restaura o lote (projeto + tarefas). Idempotente; bloqueia órfão. */
+  async restore(
+    session: SessionContext,
+    row: { projectId: string; deletedAt: Date | null; deletionBatchId: string | null },
+  ): Promise<void> {
+    if (!row.deletedAt || !row.deletionBatchId) return; // já ativo → no-op
+    if (!(await this.engagements.isProjectActive(row.projectId, session.orgId))) {
+      throw new AppError("VALIDACAO", "Não é possível desfazer: o cliente também foi excluído");
+    }
+    await this.engagements.restoreBatch(row.deletionBatchId, session.orgId);
+  }
+
   // ---- consultores ----
   async listConsultores(engagement: EngagementRecord): Promise<EngagementMemberView[]> {
     return this.members.list(engagement.id);

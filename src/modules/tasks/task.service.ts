@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { AUDITABLE_FIELDS, PERMISSIONS, type TaskStatus } from "@sistema-tasks/contracts";
 import type { CreateTaskInput, UpdateTaskInput } from "@sistema-tasks/contracts";
 import { AppError } from "../../lib/errors.js";
@@ -277,8 +278,30 @@ export class TaskService {
     return moved;
   }
 
-  async softDelete(id: string): Promise<void> {
-    await this.tasks.softDelete(id);
+  async softDelete(session: SessionContext, id: string): Promise<void> {
+    await this.tasks.softDelete(id, session.orgId, randomUUID()); // batch pro undo restaurar por lote
+  }
+
+  /** Carrega a tarefa (mesmo excluída) pro restore — a rota precisa do projectId pra autorizar. */
+  async getAnyForRestore(
+    session: SessionContext,
+    id: string,
+  ): Promise<{ id: string; projectId: string; engagementId: string; deletedAt: Date | null; deletionBatchId: string | null }> {
+    const row = await this.tasks.findAnyById(id, session.orgId);
+    if (!row) throw new AppError("NAO_ENCONTRADO", "Recurso não encontrado");
+    return row;
+  }
+
+  /** Desfaz a exclusão: restaura o lote. Idempotente (já ativo = no-op). Bloqueia órfão (pai excluído). */
+  async restore(
+    session: SessionContext,
+    row: { engagementId: string; projectId: string; deletedAt: Date | null; deletionBatchId: string | null },
+  ): Promise<void> {
+    if (!row.deletedAt || !row.deletionBatchId) return; // já ativo → no-op sucesso
+    if (!(await this.tasks.areParentsActive(row.engagementId, row.projectId, session.orgId))) {
+      throw new AppError("VALIDACAO", "Não é possível desfazer: o projeto ou o cliente também foi excluído");
+    }
+    await this.tasks.restoreBatch(row.deletionBatchId, session.orgId);
   }
 
   // ---- responsáveis (principal em Task.assigneeId + extras) [detalhe-tarefa A1] ----

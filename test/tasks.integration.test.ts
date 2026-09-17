@@ -116,9 +116,10 @@ describe("tarefas (5b)", () => {
     expect((await call("GET", `/tasks/${id}`, "boss")).json().estimatedMinutes).toBe(120);
   });
 
-  it("edição com If-Unmodified-Since velho → 409 (conflito)", async () => {
+  it("edição com token de concorrência velho → 409 (conflito)", async () => {
+    // header customizado x-expected-updated-at (o If-Unmodified-Since reservado é barrado pelo edge). [fix 412]
     const res = await call("PATCH", `/tasks/${taskId}`, "u1", { title: "X" }, {
-      "if-unmodified-since": "2020-01-01T00:00:00.000Z",
+      "x-expected-updated-at": "2020-01-01T00:00:00.000Z",
     });
     expect(res.statusCode).toBe(409);
   });

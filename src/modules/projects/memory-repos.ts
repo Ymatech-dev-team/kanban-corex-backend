@@ -3,6 +3,7 @@ import type { NewProject, ProjectAccessRepo, ProjectMemberView, ProjectRecord, P
 
 export class InMemoryProjectRepo implements ProjectRepo {
   private byId = new Map<string, ProjectRecord>();
+  private batch = new Map<string, string>(); // id -> deletionBatchId (ProjectRecord não carrega o campo)
 
   async create(p: NewProject): Promise<ProjectRecord> {
     const now = new Date();
@@ -38,9 +39,30 @@ export class InMemoryProjectRepo implements ProjectRepo {
     p.updatedAt = new Date();
     return { ...p };
   }
-  async softDeleteWithTasks(id: string, _batchId: string): Promise<void> {
+  async softDeleteWithTasks(id: string, batchId: string): Promise<void> {
     const p = this.byId.get(id);
-    if (p) p.deletedAt = new Date();
+    if (p) {
+      p.deletedAt = new Date();
+      this.batch.set(id, batchId);
+    }
+  }
+  async findAnyById(
+    id: string,
+    orgId: string,
+  ): Promise<{ id: string; deletedAt: Date | null; deletionBatchId: string | null } | null> {
+    const p = this.byId.get(id);
+    return p && p.orgId === orgId
+      ? { id: p.id, deletedAt: p.deletedAt, deletionBatchId: this.batch.get(id) ?? null }
+      : null;
+  }
+  async restoreBatch(batchId: string, orgId: string): Promise<void> {
+    for (const [id, b] of this.batch) {
+      const p = this.byId.get(id);
+      if (b === batchId && p && p.orgId === orgId && p.deletedAt) {
+        p.deletedAt = null;
+        this.batch.delete(id);
+      }
+    }
   }
 }
 

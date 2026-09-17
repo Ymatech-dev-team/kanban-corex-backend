@@ -165,7 +165,15 @@ export function makeTaskRoutes(authenticate: Authenticate, authz: Authorizer, se
     r.delete("/tasks/:id", { preHandler: authenticate, schema: { params: idParams } }, async (req) => {
       const task = await service.getOrThrow(req.session!, req.params.id);
       await authz.assertCan(req.session!, PERMISSIONS.tarefas_excluir, task.projectId);
-      await service.softDelete(task.id);
+      await service.softDelete(req.session!, task.id);
+      return { ok: true };
+    });
+
+    // Desfazer a exclusão (undo). Mesma permissão do delete; carrega a tarefa (mesmo excluída) pro authz.
+    r.post("/tasks/:id/restore", { preHandler: authenticate, schema: { params: idParams } }, async (req) => {
+      const row = await service.getAnyForRestore(req.session!, req.params.id);
+      await authz.assertCan(req.session!, PERMISSIONS.tarefas_excluir, row.projectId);
+      await service.restore(req.session!, row);
       return { ok: true };
     });
 

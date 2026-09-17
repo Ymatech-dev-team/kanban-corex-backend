@@ -49,6 +49,13 @@ export function makeProjectRoutes(
       return { ok: true };
     });
 
+    // Desfazer a exclusão do cliente (undo). Mesma permissão do delete.
+    r.post("/projects/:id/restore", { preHandler: authenticate, schema: { params: idParams } }, async (req) => {
+      await authz.assertCan(req.session!, PERMISSIONS.projetos_excluir, req.params.id);
+      await service.restore(req.session!, req.params.id);
+      return { ok: true };
+    });
+
     r.get(
       "/projects/:id/members",
       { preHandler: authenticate, schema: { params: idParams } },

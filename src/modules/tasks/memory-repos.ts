@@ -37,6 +37,7 @@ function clone(t: TaskRecord): TaskRecord {
 
 export class InMemoryTaskRepo implements TaskRepo {
   private byId = new Map<string, TaskRecord>();
+  private batch = new Map<string, string>(); // id -> deletionBatchId
 
   async create(t: NewTask): Promise<TaskRecord> {
     const now = new Date();
@@ -146,9 +147,33 @@ export class InMemoryTaskRepo implements TaskRepo {
     t.updatedAt = new Date();
     return clone(t);
   }
-  async softDelete(id: string): Promise<void> {
+  async softDelete(id: string, orgId: string, batchId: string): Promise<void> {
     const t = this.byId.get(id);
-    if (t) t.deletedAt = new Date();
+    if (t && t.orgId === orgId && !t.deletedAt) {
+      t.deletedAt = new Date();
+      this.batch.set(id, batchId);
+    }
+  }
+  async findAnyById(
+    id: string,
+    orgId: string,
+  ): Promise<{ id: string; projectId: string; engagementId: string; deletedAt: Date | null; deletionBatchId: string | null } | null> {
+    const t = this.byId.get(id);
+    return t && t.orgId === orgId
+      ? { id: t.id, projectId: t.projectId, engagementId: t.engagementId, deletedAt: t.deletedAt, deletionBatchId: this.batch.get(id) ?? null }
+      : null;
+  }
+  async restoreBatch(batchId: string, orgId: string): Promise<void> {
+    for (const [id, b] of this.batch) {
+      const t = this.byId.get(id);
+      if (b === batchId && t && t.orgId === orgId && t.deletedAt) {
+        t.deletedAt = null;
+        this.batch.delete(id);
+      }
+    }
+  }
+  async areParentsActive(_engagementId: string, _projectId: string, _orgId: string): Promise<boolean> {
+    return true; // stub de teste: o in-memory não modela exclusão dos pais
   }
   async maxPositionByEngagement(engagementId: string, status: TaskRecord["status"]): Promise<number> {
     const ps = [...this.byId.values()]

@@ -75,7 +75,17 @@ export interface TaskRepo {
   listAll(scope: string[] | "all", orgId: string, filters: TaskFilterOpts): Promise<ListAllResult>;
   update(id: string, patch: TaskPatch): Promise<TaskRecord>;
   move(id: string, status: TaskStatus, position: number): Promise<TaskRecord>;
-  softDelete(id: string): Promise<void>;
+  /** Soft-delete: grava deletedAt + deletionBatchId (batch da exclusão, pro undo restaurar por lote). */
+  softDelete(id: string, orgId: string, batchId: string): Promise<void>;
+  /** Busca IGNORANDO o filtro deletedAt (pro restore ler o batch e os pais). orgId cerca o tenant. */
+  findAnyById(
+    id: string,
+    orgId: string,
+  ): Promise<{ id: string; projectId: string; engagementId: string; deletedAt: Date | null; deletionBatchId: string | null } | null>;
+  /** Reativa as tarefas daquele lote (só as ainda excluídas). Idempotente. */
+  restoreBatch(batchId: string, orgId: string): Promise<void>;
+  /** Projeto (engagement) E cliente (project) pais estão ativos? (bloqueia restaurar órfão). */
+  areParentsActive(engagementId: string, projectId: string, orgId: string): Promise<boolean>;
   maxPositionByEngagement(engagementId: string, status: TaskStatus): Promise<number>;
   // responsáveis extras [detalhe-tarefa A1]. orgId sempre no WHERE (defense-in-depth cross-org) [SEC-A04]
   addExtraAssignee(taskId: string, userId: string, orgId: string): Promise<void>;

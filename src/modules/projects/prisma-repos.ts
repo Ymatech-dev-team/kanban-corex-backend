@@ -55,6 +55,34 @@ export class PrismaProjectRepo implements ProjectRepo {
       }),
     ]);
   }
+
+  async findAnyById(
+    id: string,
+    orgId: string,
+  ): Promise<{ id: string; deletedAt: Date | null; deletionBatchId: string | null } | null> {
+    return this.db.project.findFirst({
+      where: { id, orgId }, // SEM filtro deletedAt — pro undo
+      select: { id: true, deletedAt: true, deletionBatchId: true },
+    });
+  }
+
+  async restoreBatch(batchId: string, orgId: string): Promise<void> {
+    // reativa cliente + engagements + tarefas do MESMO lote (só os ainda excluídos). [excluir-com-seguranca]
+    await this.db.$transaction([
+      this.db.project.updateMany({
+        where: { orgId, deletionBatchId: batchId, deletedAt: { not: null } },
+        data: { deletedAt: null, deletionBatchId: null },
+      }),
+      this.db.engagement.updateMany({
+        where: { orgId, deletionBatchId: batchId, deletedAt: { not: null } },
+        data: { deletedAt: null, deletionBatchId: null },
+      }),
+      this.db.task.updateMany({
+        where: { orgId, deletionBatchId: batchId, deletedAt: { not: null } },
+        data: { deletedAt: null, deletionBatchId: null },
+      }),
+    ]);
+  }
 }
 
 export class PrismaProjectAccessRepo implements ProjectAccessRepo {
