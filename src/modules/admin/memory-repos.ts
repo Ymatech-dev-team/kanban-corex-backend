@@ -114,7 +114,7 @@ export class InMemoryMemberRepo implements MemberRepo {
     }
   }
   readonly nulledAssignees: string[] = [];
-  async nullAllAssignees(userId: string): Promise<void> {
+  async nullAllAssignees(userId: string, _orgId: string): Promise<void> {
     this.nulledAssignees.push(userId);
   }
   async listGovernanceAdminIds(orgId: string): Promise<string[]> {

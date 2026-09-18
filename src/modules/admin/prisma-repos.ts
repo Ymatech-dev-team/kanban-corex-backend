@@ -94,8 +94,9 @@ export class PrismaMemberRepo implements MemberRepo {
   async setCompensation(id: string, type: string | null, cents: number | null): Promise<void> {
     await this.db.user.update({ where: { id }, data: { compensationType: type, compensationCents: cents } });
   }
-  async nullAllAssignees(userId: string): Promise<void> {
-    await this.db.task.updateMany({ where: { assigneeId: userId }, data: { assigneeId: null } });
+  async nullAllAssignees(userId: string, orgId: string): Promise<void> {
+    // orgId no WHERE mesmo o userId sendo único por org — mantém o invariante "orgId sempre no WHERE". [hardening T6]
+    await this.db.task.updateMany({ where: { assigneeId: userId, orgId }, data: { assigneeId: null } });
   }
   async listGovernanceAdminIds(orgId: string): Promise<string[]> {
     const rows = await this.db.user.findMany({ where: { orgId, deletedAt: null }, include: { role: true } });

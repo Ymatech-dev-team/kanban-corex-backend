@@ -142,7 +142,7 @@ export class MemberService {
     }
     await this.members.softDeleteAndBump(targetId); // deletedAt + bump tokenVersion (mata sessão)
     await this.refresh.revokeAllForUser(targetId);
-    await this.members.nullAllAssignees(targetId); // [SEC-007/RF8]
+    await this.members.nullAllAssignees(targetId, session.orgId); // [SEC-007/RF8]
     await this.audit.record({ actorId: session.userId, targetUserId: targetId, action: "member.delete", detail: {} });
   }
 
@@ -157,7 +157,7 @@ export class MemberService {
     }
     await this.members.softDeleteAndBump(session.userId);
     await this.refresh.revokeAllForUser(session.userId);
-    await this.members.nullAllAssignees(session.userId);
+    await this.members.nullAllAssignees(session.userId, session.orgId);
     await this.audit.record({
       actorId: session.userId,
       targetUserId: session.userId,

@@ -94,7 +94,7 @@ export class ProjectService {
     await this.access.revoke(projectId, userId);
     await this.access.nullAssigneesInProject(projectId, userId); // [SEC-110]
     // Perdeu acesso ao cliente → sai de consultor de todos os projetos daquele cliente. [RF-42]
-    await this.engagementMembers?.removeUserFromClientEngagements(projectId, userId);
+    await this.engagementMembers?.removeUserFromClientEngagements(projectId, userId, session.orgId);
     await this.audit.record({
       actorId: session.userId,
       targetUserId: userId,

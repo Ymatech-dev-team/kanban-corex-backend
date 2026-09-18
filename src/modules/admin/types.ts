@@ -45,7 +45,7 @@ export interface MemberRepo {
   setTempPasswordAndBump(id: string, passwordHash: string): Promise<void>;
   /** Define (ou limpa) a remuneração do membro. Ambos null = limpar. */
   setCompensation(id: string, type: string | null, cents: number | null): Promise<void>;
-  nullAllAssignees(userId: string): Promise<void>;
+  nullAllAssignees(userId: string, orgId: string): Promise<void>;
   /** IDs dos usuários cuja permissão efetiva inclui conceder + gerenciar (admins). [SEC-016] */
   listGovernanceAdminIds(orgId: string): Promise<string[]>;
   /** Membros ativos com role+extras, para simular o efeito de editar uma role. [SEC-201] */

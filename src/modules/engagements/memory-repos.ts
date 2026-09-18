@@ -120,13 +120,13 @@ export class InMemoryEngagementMemberRepo implements EngagementMemberRepo {
       .map((id) => ({ id, name: this.names.get(id) ?? id }))
       .sort((a, b) => a.name.localeCompare(b.name));
   }
-  async removeUserFromClientEngagements(projectId: string, userId: string): Promise<void> {
+  async removeUserFromClientEngagements(projectId: string, userId: string, _orgId: string): Promise<void> {
     for (const k of [...this.set]) {
       const [engId, uid] = k.split("::");
       if (uid === userId && this.engProject.get(engId) === projectId) this.set.delete(k);
     }
   }
-  async nullAssigneesInEngagement(engagementId: string, userId: string): Promise<void> {
+  async nullAssigneesInEngagement(engagementId: string, userId: string, _orgId: string): Promise<void> {
     this.nulled.push({ engagementId, userId });
   }
 }

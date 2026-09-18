@@ -102,6 +102,6 @@ export class EngagementService {
   async removeConsultor(engagement: EngagementRecord, userId: string): Promise<void> {
     await this.members.remove(engagement.id, userId);
     // Anula o responsável só nas tarefas DESTE projeto atribuídas a ele. [RF-44/SEC-110]
-    await this.members.nullAssigneesInEngagement(engagement.id, userId);
+    await this.members.nullAssigneesInEngagement(engagement.id, userId, engagement.orgId);
   }
 }

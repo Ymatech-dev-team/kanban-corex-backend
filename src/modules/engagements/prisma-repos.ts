@@ -125,12 +125,12 @@ export class PrismaEngagementMemberRepo implements EngagementMemberRepo {
     });
     return rows.map((r) => ({ id: r.user.id, name: r.user.name }));
   }
-  async removeUserFromClientEngagements(projectId: string, userId: string): Promise<void> {
+  async removeUserFromClientEngagements(projectId: string, userId: string, orgId: string): Promise<void> {
     await this.db.engagementMember.deleteMany({
-      where: { userId, engagement: { projectId } },
+      where: { userId, engagement: { projectId, orgId } }, // orgId no WHERE (defense-in-depth) [hardening T6]
     });
   }
-  async nullAssigneesInEngagement(engagementId: string, userId: string): Promise<void> {
-    await this.db.task.updateMany({ where: { engagementId, assigneeId: userId }, data: { assigneeId: null } });
+  async nullAssigneesInEngagement(engagementId: string, userId: string, orgId: string): Promise<void> {
+    await this.db.task.updateMany({ where: { engagementId, assigneeId: userId, orgId }, data: { assigneeId: null } });
   }
 }

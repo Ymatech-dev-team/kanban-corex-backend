@@ -109,6 +109,7 @@ export function buildApp(deps: AppDeps = {}): FastifyInstance {
         "*.currentPassword",
         "*.newPassword",
         "*.confirmPassword",
+        "*.tempPassword", // senha temporária devolvida por member.create/resetPassword [hardening T6]
       ],
     },
   });

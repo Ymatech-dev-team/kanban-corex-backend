@@ -53,7 +53,7 @@ export interface EngagementMemberRepo {
   remove(engagementId: string, userId: string): Promise<void>;
   list(engagementId: string): Promise<EngagementMemberView[]>;
   /** Remove a participação do usuário em TODOS os projetos de um cliente (cascata ao revogar acesso). [RF-42] */
-  removeUserFromClientEngagements(projectId: string, userId: string): Promise<void>;
+  removeUserFromClientEngagements(projectId: string, userId: string, orgId: string): Promise<void>;
   /** Anula o responsável só nas tarefas DAQUELE projeto atribuídas ao usuário. [RF-44/SEC-110] */
-  nullAssigneesInEngagement(engagementId: string, userId: string): Promise<void>;
+  nullAssigneesInEngagement(engagementId: string, userId: string, orgId: string): Promise<void>;
 }
