@@ -29,6 +29,7 @@
     "@sistema-tasks/contracts": "file:./vendor/contracts",
     "@upstash/ratelimit": "^2.1.0",
     "@upstash/redis": "^1.38.4",
+    "@vercel/blob": "^2.8.0",
     "bcryptjs": "^2.4.3",
     "dotenv": "^16.4.5",
     "fastify": "^4.28.1",

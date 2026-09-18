@@ -186,6 +186,7 @@ model Task {
   extraAssignees TaskAssignee[]
   activity   TaskActivity[]
   comments   TaskComment[]
+  attachments TaskAttachment[]
   subtasks   Subtask[]
 
   // habilita FKs compostas de tenant das tabelas-filhas (task_assignees etc.) [detalhe-tarefa A4]
@@ -231,6 +232,28 @@ model TaskActivity {
 
   @@index([taskId, createdAt(sort: Desc), id])
   @@map("task_activity")
+}
+
+// Anexos da tarefa (Vercel Blob). O arquivo mora no Blob (url); aqui só o registro/metadata. [anexos]
+model TaskAttachment {
+  id           String   @id @default(cuid())
+  taskId       String
+  orgId        String
+  uploaderId   String
+  uploaderName String
+  fileName     String
+  contentType  String
+  size         Int
+  url          String
+  pathname     String
+  createdAt    DateTime @default(now())
+
+  // FK composta (task, org) — coerência de tenant no banco, cascade no delete da tarefa. [SEC-A02]
+  task Task @relation(fields: [taskId, orgId], references: [id, orgId], onDelete: Cascade)
+
+  @@unique([pathname]) // 1 blob = 1 registro (idempotência do confirm)
+  @@index([taskId, createdAt(sort: Desc), id])
+  @@map("task_attachment")
 }
 
 // Preset de filtro do board, por usuário e por cliente (Project). Payload dos filtros em JSONB. [filtros-salvos-board]

@@ -42,6 +42,9 @@ import { makeEngagementRoutes } from "./modules/engagements/engagement.routes.js
 import { NotificationService } from "./modules/notifications/notification.service.js";
 import { PrismaNotificationRepo } from "./modules/notifications/prisma-repo.js";
 import { makeNotificationRoutes } from "./modules/notifications/notification.routes.js";
+import { AttachmentService } from "./modules/attachments/attachment.service.js";
+import { PrismaAttachmentRepo } from "./modules/attachments/prisma-repo.js";
+import { makeAttachmentRoutes } from "./modules/attachments/attachment.routes.js";
 import { BoardFilterService } from "./modules/board-filters/board-filter.service.js";
 import { PrismaBoardFilterRepo } from "./modules/board-filters/prisma-repo.js";
 import { makeBoardFilterRoutes } from "./modules/board-filters/board-filter.routes.js";
@@ -58,6 +61,7 @@ export interface AppDeps {
   costService?: CostService;
   engagementService?: EngagementService;
   notificationService?: NotificationService;
+  attachmentService?: AttachmentService;
   boardFilterService?: BoardFilterService;
 }
 
@@ -138,6 +142,7 @@ export function buildApp(deps: AppDeps = {}): FastifyInstance {
   let costService = deps.costService;
   let engagementService = deps.engagementService;
   let notificationService = deps.notificationService;
+  let attachmentService = deps.attachmentService;
   let boardFilterService = deps.boardFilterService;
   if (process.env.DATABASE_URL) {
     tokenService = tokenService ?? new TokenService(tokenConfigFromEnv());
@@ -171,6 +176,7 @@ export function buildApp(deps: AppDeps = {}): FastifyInstance {
       engagementService ?? new EngagementService(new PrismaEngagementRepo(db), engagementMemberRepo, accessRepo);
     notificationService =
       notificationService ?? new NotificationService(new PrismaNotificationRepo(db), accessRepo);
+    attachmentService = attachmentService ?? new AttachmentService(new PrismaAttachmentRepo(db));
     boardFilterService = boardFilterService ?? new BoardFilterService(new PrismaBoardFilterRepo(db));
   }
 
@@ -200,6 +206,9 @@ export function buildApp(deps: AppDeps = {}): FastifyInstance {
   }
   if (authenticate && notificationService) {
     typed.register(makeNotificationRoutes(authenticate, notificationService));
+  }
+  if (authenticate && authorizer && taskService && attachmentService) {
+    typed.register(makeAttachmentRoutes(authenticate, authorizer, taskService, attachmentService));
   }
   if (authenticate && authorizer && boardFilterService) {
     typed.register(makeBoardFilterRoutes(authenticate, authorizer, boardFilterService));
