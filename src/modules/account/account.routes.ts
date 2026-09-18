@@ -4,6 +4,7 @@ import { changePasswordSchema, updateProfileSchema } from "@sistema-tasks/contra
 import type { Authenticate } from "../authz/authenticate.js";
 import type { AuthService } from "../auth/auth.service.js";
 import type { MemberService } from "../admin/member.service.js";
+import { limitAuthAttempt } from "../auth/rate-limit.js";
 
 /** Conta do próprio usuário: trocar senha, editar perfil, excluir conta. */
 export function makeAccountRoutes(authenticate: Authenticate, auth: AuthService, members: MemberService) {
@@ -15,6 +16,7 @@ export function makeAccountRoutes(authenticate: Authenticate, auth: AuthService,
       "/auth/change-password",
       { preHandler: authenticate, schema: { body: changePasswordSchema } },
       async (req) => {
+        await limitAuthAttempt(req.session!.userId, req.log); // throttle por usuário (token roubado) [T2]
         await auth.changePassword(req.session!.userId, req.body.currentPassword, req.body.newPassword);
         return { ok: true };
       },

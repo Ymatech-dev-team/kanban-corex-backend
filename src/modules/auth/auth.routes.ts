@@ -3,6 +3,7 @@ import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { loginSchema, refreshSchema, firstLoginSchema } from "@sistema-tasks/contracts";
 import { AuthService } from "./auth.service.js";
 import { TokenService } from "./token.service.js";
+import { limitAuthAttempt } from "./rate-limit.js";
 
 /**
  * Rotas de auth. NÃO são `public` (exigem HMAC do BFF), mas não exigem sessão.
@@ -35,6 +36,7 @@ export function makeAuthRoutes(service: AuthService, tokens: TokenService) {
     r.post("/auth/first-login", { schema: { body: firstLoginSchema } }, async (req) => {
       const bearer = String(req.headers.authorization ?? "").replace(/^Bearer\s+/i, "");
       const { userId } = tokens.verifyAccess(bearer);
+      await limitAuthAttempt(userId, req.log); // throttle por usuário [T2]
       await service.firstLogin(userId, req.body.currentPassword, req.body.newPassword);
       return { ok: true };
     });
