@@ -15,3 +15,31 @@ schema source-of-truth + client tipado. Toda mudança é um `.sql` idempotente, 
 - **Sem `DO $$`/PL-pgSQL** (quebra no runner do Neon).
 - SQL já aplicado **nunca é editado** — correção vira novo arquivo `NNN_*.sql`.
 - Neon: `DATABASE_URL` (com `-pooler`) no runtime; `DIRECT_URL` (sem) para psql/diff.
+
+## Ledger de migrations (a partir do 016)
+
+A tabela `schema_migrations (name, applied_at)` registra **o que já rodou neste banco**. Como dev e
+prod são o **mesmo Neon**, o ledger é único e evita rodar (ou esquecer) um script duas vezes.
+
+**Regra nova:** todo script `NNN_*.sql` **se auto-registra** — a última linha antes do `COMMIT` é o
+insert do próprio nome (sem `.sql`), idempotente:
+
+```sql
+BEGIN;
+
+-- ... suas mudanças idempotentes ...
+
+INSERT INTO schema_migrations (name) VALUES ('NNN_nome_do_script') ON CONFLICT (name) DO NOTHING;
+
+COMMIT;
+```
+
+**Status — o que já foi aplicado** (rode e compare com os arquivos da pasta pra achar pendências):
+
+```sql
+SELECT name, applied_at FROM schema_migrations ORDER BY name;
+```
+
+Pendências conhecidas hoje: **013_notif_assignment_index** (não aplicado) e **014_task_attachments**
+(anexos estacionado) — ambos ficam de fora do ledger até serem rodados; aí cada um insere seu nome.
+Scripts 001–012 e 015 foram backfillados pelo `016_migrations_ledger.sql`.
