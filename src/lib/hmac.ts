@@ -1,4 +1,4 @@
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 
 /**
  * Barreira interna BFF→API. O BFF assina cada requisição; a API verifica.
@@ -10,6 +10,24 @@ const DEFAULT_WINDOW_MS = 30_000;
 
 export function signInternal(secret: string, body: string, timestamp: number): string {
   return createHmac("sha256", secret).update(`${timestamp}.${body}`).digest("hex");
+}
+
+export function sha256Hex(s: string): string {
+  return createHash("sha256").update(s).digest("hex");
+}
+
+/**
+ * Assinatura v2 (T5): amarra MÉTODO + PATH (sem query) + hash do body, além do timestamp — fecha o
+ * reuso cross-endpoint (um GET de body vazio deixa de valer pra qualquer rota). Path SEM query de
+ * propósito (a query normaliza diferente entre fetch/edge e o backend). Separador `\n` (nenhum campo
+ * carrega newline cru). DEVE bater byte-a-byte com o `signInternalRequestV2` do BFF. [hardening T5]
+ */
+export function signInternalV2(
+  secret: string,
+  input: { method: string; path: string; body: string; timestamp: number },
+): string {
+  const canonical = `${input.timestamp}\n${input.method.toUpperCase()}\n${input.path}\n${sha256Hex(input.body)}`;
+  return createHmac("sha256", secret).update(canonical).digest("hex");
 }
 
 export interface VerifyInput {

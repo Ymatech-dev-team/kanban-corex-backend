@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
-import { verifyInternal } from "../lib/hmac.js";
+import { verifyInternal, signInternalV2 } from "../lib/hmac.js";
 import { AppError } from "../lib/errors.js";
 
 /**
@@ -45,6 +45,18 @@ export function registerInternalAuth(app: FastifyInstance): void {
     const res = verifyInternal({ secret, body: rawBody ?? "", timestamp, signature });
     if (!res.ok) {
       throw new AppError("NAO_AUTENTICADO", "Requisição interna não autenticada");
+    }
+
+    // T5 Fase 1 (observe-only): mede se o canônico v2 (método+path+hash) bateria com o que o BFF assina,
+    // SEM rejeitar. Quando `hmac_v2_mismatch` ficar 0 em prod real, a Fase 2 troca a auth pro v2. [hardening T5]
+    const v2Header = String(req.headers["x-internal-sig-v2"] ?? "");
+    if (v2Header) {
+      const path = (req.url ?? "").split("?")[0];
+      const expectedV2 = signInternalV2(secret, { method: req.method, path, body: rawBody ?? "", timestamp });
+      if (expectedV2 !== v2Header) {
+        // só método+path (nunca body/assinatura) — dado suficiente pra achar o mismatch sem vazar nada.
+        req.log.warn({ event: "hmac_v2_mismatch", method: req.method, path }, "HMAC v2 divergente (fase 1)");
+      }
     }
   });
 }
