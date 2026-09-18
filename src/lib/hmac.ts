@@ -49,11 +49,59 @@ export function verifyInternal(input: VerifyInput): { ok: boolean; reason?: stri
   if (Math.abs(now - input.timestamp) > windowMs) {
     return { ok: false, reason: "timestamp fora da janela (replay)" };
   }
-  if (!input.signature || !/^[0-9a-f]+$/i.test(input.signature)) {
+  if (!input.signature || !/^[0-9a-f]{64}$/i.test(input.signature)) {
     return { ok: false, reason: "assinatura ausente/malformada" };
   }
 
   const expected = Buffer.from(signInternal(input.secret, input.body, input.timestamp), "hex");
+  const provided = Buffer.from(input.signature, "hex");
+  if (expected.length !== provided.length) {
+    return { ok: false, reason: "assinatura inválida" };
+  }
+  if (!timingSafeEqual(expected, provided)) {
+    return { ok: false, reason: "assinatura inválida" };
+  }
+  return { ok: true };
+}
+
+export interface VerifyV2Input {
+  secret: string;
+  method: string;
+  path: string;
+  body: string;
+  timestamp: number;
+  signature: string;
+  nowMs?: number;
+  windowMs?: number;
+}
+
+/**
+ * Verifica a assinatura v2 (T5): mesmo anti-replay (janela de timestamp) e compare timing-safe do v1,
+ * mas contra o canônico método+path+hash(body). Usada como auth primária na Fase 2. [hardening T5]
+ */
+export function verifyInternalV2(input: VerifyV2Input): { ok: boolean; reason?: string } {
+  const now = input.nowMs ?? Date.now();
+  const windowMs = input.windowMs ?? DEFAULT_WINDOW_MS;
+
+  if (!Number.isFinite(input.timestamp)) {
+    return { ok: false, reason: "timestamp inválido" };
+  }
+  if (Math.abs(now - input.timestamp) > windowMs) {
+    return { ok: false, reason: "timestamp fora da janela (replay)" };
+  }
+  if (!input.signature || !/^[0-9a-f]{64}$/i.test(input.signature)) {
+    return { ok: false, reason: "assinatura ausente/malformada" };
+  }
+
+  const expected = Buffer.from(
+    signInternalV2(input.secret, {
+      method: input.method,
+      path: input.path,
+      body: input.body,
+      timestamp: input.timestamp,
+    }),
+    "hex",
+  );
   const provided = Buffer.from(input.signature, "hex");
   if (expected.length !== provided.length) {
     return { ok: false, reason: "assinatura inválida" };

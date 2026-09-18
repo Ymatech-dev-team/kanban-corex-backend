@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { signInternalV2 } from "../src/lib/hmac.js";
+import { signInternalV2, verifyInternalV2 } from "../src/lib/hmac.js";
 
 /**
  * Vetor de PARIDADE: o mesmo teste (mesmos hexes) existe no front (src/lib/server/hmac.test.ts).
@@ -29,5 +29,58 @@ describe("HMAC v2 — vetor de paridade + binding", () => {
     const a = signInternalV2(SECRET, { method: "GET", path: "/tasks/1", body: "", timestamp: TS });
     const b = signInternalV2(SECRET, { method: "DELETE", path: "/tasks/1", body: "", timestamp: TS });
     expect(a).not.toBe(b);
+  });
+});
+
+describe("verifyInternalV2 — auth primária da Fase 2", () => {
+  const base = { method: "POST", path: "/tasks", body: '{"title":"x"}' };
+  const sign = (ts: number, over: Partial<typeof base> = {}) =>
+    signInternalV2(SECRET, { ...base, ...over, timestamp: ts });
+
+  it("assinatura válida dentro da janela passa", () => {
+    const ts = 1700000000000;
+    const signature = sign(ts);
+    expect(verifyInternalV2({ secret: SECRET, ...base, timestamp: ts, signature, nowMs: ts }).ok).toBe(true);
+  });
+
+  it("método diferente do assinado falha (binding)", () => {
+    const ts = 1700000000000;
+    const signature = sign(ts, { method: "GET" }); // assinou GET
+    const r = verifyInternalV2({ secret: SECRET, ...base, timestamp: ts, signature, nowMs: ts }); // verifica POST
+    expect(r.ok).toBe(false);
+  });
+
+  it("path diferente do assinado falha (binding)", () => {
+    const ts = 1700000000000;
+    const signature = sign(ts, { path: "/projects" });
+    const r = verifyInternalV2({ secret: SECRET, ...base, timestamp: ts, signature, nowMs: ts });
+    expect(r.ok).toBe(false);
+  });
+
+  it("body adulterado falha", () => {
+    const ts = 1700000000000;
+    const signature = sign(ts);
+    const r = verifyInternalV2({ secret: SECRET, ...base, body: '{"title":"y"}', timestamp: ts, signature, nowMs: ts });
+    expect(r.ok).toBe(false);
+  });
+
+  it("fora da janela (replay) falha", () => {
+    const ts = 1700000000000;
+    const signature = sign(ts);
+    const r = verifyInternalV2({ secret: SECRET, ...base, timestamp: ts, signature, nowMs: ts + 31_000 });
+    expect(r.ok).toBe(false);
+    expect(r.reason).toMatch(/replay/);
+  });
+
+  it("assinatura ausente/malformada falha", () => {
+    const ts = 1700000000000;
+    expect(verifyInternalV2({ secret: SECRET, ...base, timestamp: ts, signature: "", nowMs: ts }).ok).toBe(false);
+    expect(verifyInternalV2({ secret: SECRET, ...base, timestamp: ts, signature: "zz", nowMs: ts }).ok).toBe(false);
+  });
+
+  it("segredo errado falha", () => {
+    const ts = 1700000000000;
+    const signature = sign(ts);
+    expect(verifyInternalV2({ secret: "outro", ...base, timestamp: ts, signature, nowMs: ts }).ok).toBe(false);
   });
 });

@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
-import { verifyInternal, signInternalV2 } from "../lib/hmac.js";
+import { verifyInternal, verifyInternalV2 } from "../lib/hmac.js";
 import { AppError } from "../lib/errors.js";
 
 /**
@@ -32,7 +32,6 @@ export function registerInternalAuth(app: FastifyInstance): void {
       throw new AppError("INTERNO", "INTERNAL_API_SECRET ausente");
     }
     const timestamp = Number(req.headers["x-internal-timestamp"]);
-    const signature = String(req.headers["x-internal-signature"] ?? "");
     const rawBody = (req as FastifyRequest & { rawBody?: string }).rawBody;
 
     // Se há corpo mas o parser de rawBody não rodou (content-type não suportado),
@@ -42,21 +41,24 @@ export function registerInternalAuth(app: FastifyInstance): void {
       throw new AppError("NAO_AUTENTICADO", "Conteúdo não suportado");
     }
 
+    const path = (req.url ?? "").split("?")[0];
+
+    // T5 Fase 2: o v2 (método+path+hash+ts) é a auth PRIMÁRIA. Se presente e válido, autentica por ele.
+    // Prod real deu 0 divergência na Fase 1 (observe-only), então o v2 é confiável. [hardening T5]
+    const v2Header = String(req.headers["x-internal-sig-v2"] ?? "");
+    if (v2Header) {
+      const r2 = verifyInternalV2({ secret, method: req.method, path, body: rawBody ?? "", timestamp, signature: v2Header });
+      if (r2.ok) return;
+    }
+
+    // Rede de segurança (dual-accept): v2 ausente/ inválido → cai pro v1. Enquanto essa rede existir,
+    // logamos todo uso dela — quando `hmac_v1_fallback` ficar 0 em prod, a Fase 3 remove o v1. [hardening T5]
+    const signature = String(req.headers["x-internal-signature"] ?? "");
     const res = verifyInternal({ secret, body: rawBody ?? "", timestamp, signature });
     if (!res.ok) {
       throw new AppError("NAO_AUTENTICADO", "Requisição interna não autenticada");
     }
-
-    // T5 Fase 1 (observe-only): mede se o canônico v2 (método+path+hash) bateria com o que o BFF assina,
-    // SEM rejeitar. Quando `hmac_v2_mismatch` ficar 0 em prod real, a Fase 2 troca a auth pro v2. [hardening T5]
-    const v2Header = String(req.headers["x-internal-sig-v2"] ?? "");
-    if (v2Header) {
-      const path = (req.url ?? "").split("?")[0];
-      const expectedV2 = signInternalV2(secret, { method: req.method, path, body: rawBody ?? "", timestamp });
-      if (expectedV2 !== v2Header) {
-        // só método+path (nunca body/assinatura) — dado suficiente pra achar o mismatch sem vazar nada.
-        req.log.warn({ event: "hmac_v2_mismatch", method: req.method, path }, "HMAC v2 divergente (fase 1)");
-      }
-    }
+    // só método+path e se HAVIA v2 (nunca body/assinatura) — dado suficiente sem vazar nada.
+    req.log.warn({ event: "hmac_v1_fallback", method: req.method, path, hadV2: !!v2Header }, "auth via HMAC v1 (fase 2)");
   });
 }
