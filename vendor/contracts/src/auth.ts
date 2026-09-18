@@ -16,7 +16,10 @@ export type RefreshInput = z.infer<typeof refreshSchema>;
 export const firstLoginSchema = z
   .object({
     currentPassword: z.string().min(1, "Informe a senha temporária"),
-    newPassword: z.string().min(8, "A nova senha deve ter ao menos 8 caracteres"),
+    newPassword: z
+      .string()
+      .min(8, "A nova senha deve ter ao menos 8 caracteres")
+      .max(72, "A senha pode ter no máximo 72 caracteres"),
     confirmPassword: z.string(),
   })
   .refine((d) => d.newPassword === d.confirmPassword, {
@@ -29,7 +32,10 @@ export type FirstLoginInput = z.infer<typeof firstLoginSchema>;
 export const changePasswordSchema = z
   .object({
     currentPassword: z.string().min(1, "Informe a senha atual"),
-    newPassword: z.string().min(8, "A nova senha deve ter ao menos 8 caracteres"),
+    newPassword: z
+      .string()
+      .min(8, "A nova senha deve ter ao menos 8 caracteres")
+      .max(72, "A senha pode ter no máximo 72 caracteres"),
     confirmPassword: z.string(),
   })
   .refine((d) => d.newPassword === d.confirmPassword, {
