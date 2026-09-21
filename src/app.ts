@@ -33,6 +33,7 @@ import { RoleService } from "./modules/admin/role.service.js";
 import { PrismaMemberRepo, PrismaRoleRepo } from "./modules/admin/prisma-repos.js";
 import { makeAdminRoutes } from "./modules/admin/admin.routes.js";
 import { makeAccountRoutes } from "./modules/account/account.routes.js";
+import { ProfileService } from "./modules/account/profile.service.js";
 import { CostService } from "./modules/cost/cost.service.js";
 import { PrismaOrgRepo, PrismaCostRepo } from "./modules/cost/prisma-repos.js";
 import { makeCostRoutes } from "./modules/cost/cost.routes.js";
@@ -57,6 +58,7 @@ export interface AppDeps {
   projectService?: ProjectService;
   taskService?: TaskService;
   memberService?: MemberService;
+  profileService?: ProfileService;
   roleService?: RoleService;
   costService?: CostService;
   engagementService?: EngagementService;
@@ -138,6 +140,7 @@ export function buildApp(deps: AppDeps = {}): FastifyInstance {
   let projectService = deps.projectService;
   let taskService = deps.taskService;
   let memberService = deps.memberService;
+  let profileService = deps.profileService;
   let roleService = deps.roleService;
   let costService = deps.costService;
   let engagementService = deps.engagementService;
@@ -170,6 +173,8 @@ export function buildApp(deps: AppDeps = {}): FastifyInstance {
     memberService =
       memberService ??
       new MemberService(memberRepo, roleRepo, new PasswordService(12), new PrismaRefreshRepo(db), auditRepo);
+    profileService =
+      profileService ?? new ProfileService(new PrismaUserRepo(db), process.env.BLOB_PUBLIC_READ_WRITE_TOKEN ?? "");
     roleService = roleService ?? new RoleService(roleRepo, memberRepo, auditRepo);
     costService = costService ?? new CostService(new PrismaOrgRepo(db), new PrismaCostRepo(db));
     engagementService =
@@ -186,8 +191,8 @@ export function buildApp(deps: AppDeps = {}): FastifyInstance {
   if (authenticate) {
     typed.register(makeMeRoutes(authenticate));
   }
-  if (authenticate && authService && memberService) {
-    typed.register(makeAccountRoutes(authenticate, authService, memberService));
+  if (authenticate && authService && memberService && profileService) {
+    typed.register(makeAccountRoutes(authenticate, authService, memberService, profileService));
   }
   if (authenticate && authorizer && projectService) {
     typed.register(makeProjectRoutes(authenticate, authorizer, projectService));

@@ -51,6 +51,7 @@ export function makeAuthenticate(deps: { tokens: TokenService; users: AuthzUserR
       mustChangePassword: user.mustChangePassword,
       name: user.name,
       email: user.email,
+      avatarUrl: user.avatarUrl ?? null,
     };
   };
 }

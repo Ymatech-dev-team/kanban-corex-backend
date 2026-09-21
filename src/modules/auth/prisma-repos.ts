@@ -19,6 +19,7 @@ type PrismaUser = {
   mustChangePassword: boolean;
   tokenVersion: number;
   deletedAt: Date | null;
+  avatarUrl: string | null;
 };
 
 function toUser(u: PrismaUser): UserRecord {
@@ -31,6 +32,7 @@ function toUser(u: PrismaUser): UserRecord {
     mustChangePassword: u.mustChangePassword,
     tokenVersion: u.tokenVersion,
     deletedAt: u.deletedAt,
+    avatarUrl: u.avatarUrl,
   };
 }
 
@@ -54,6 +56,9 @@ export class PrismaUserRepo implements UserRepo {
   }
   async updateName(id: string, name: string): Promise<void> {
     await this.db.user.update({ where: { id }, data: { name } });
+  }
+  async updateAvatar(id: string, avatarUrl: string | null): Promise<void> {
+    await this.db.user.update({ where: { id }, data: { avatarUrl } });
   }
 }
 

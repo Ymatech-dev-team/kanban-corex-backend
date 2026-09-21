@@ -15,6 +15,7 @@ import { InMemoryProjectAccessRepo } from "../src/modules/projects/memory-repos.
 import { InMemoryUserRepo, InMemoryRefreshRepo, InMemoryLockoutStore } from "../src/modules/auth/memory-repos.js";
 import { InMemoryAdminStore, InMemoryMemberRepo, InMemoryRoleRepo } from "../src/modules/admin/memory-repos.js";
 import { MemberService } from "../src/modules/admin/member.service.js";
+import { ProfileService } from "../src/modules/account/profile.service.js";
 import type { MemberRecord, RoleRecord } from "../src/modules/admin/types.js";
 
 const SECRET = "internal-test";
@@ -63,6 +64,7 @@ beforeAll(async () => {
     authorizer: new Authorizer(new InMemoryProjectAccessRepo()),
     authService,
     memberService,
+    profileService: new ProfileService(authUsers, "test-token"),
     tokenService: tokens,
   });
   await app.ready();

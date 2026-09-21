@@ -32,6 +32,7 @@ model User {
   id                 String    @id @default(cuid())
   orgId              String
   name               String
+  avatarUrl          String? // URL pública do avatar (store público); null = usa iniciais [conta-redesign]
   email              String
   passwordHash       String
   roleId             String?

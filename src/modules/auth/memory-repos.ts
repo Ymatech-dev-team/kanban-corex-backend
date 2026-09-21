@@ -38,6 +38,10 @@ export class InMemoryUserRepo implements UserRepo {
     const u = this.byId.get(id);
     if (u) (u as UserRecord & { name?: string }).name = name;
   }
+  async updateAvatar(id: string, avatarUrl: string | null): Promise<void> {
+    const u = this.byId.get(id);
+    if (u) u.avatarUrl = avatarUrl;
+  }
   /** helper de teste */
   markDeleted(id: string): void {
     const u = this.byId.get(id);

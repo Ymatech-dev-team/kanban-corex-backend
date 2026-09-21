@@ -22,6 +22,7 @@ export class PrismaAuthzUserRepo implements AuthzUserRepo {
       extraPermissions: u.extraPermissions,
       name: u.name,
       email: u.email,
+      avatarUrl: u.avatarUrl,
     };
   }
 }

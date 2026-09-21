@@ -8,6 +8,7 @@ export interface SessionContext {
   mustChangePassword: boolean;
   name?: string;
   email?: string;
+  avatarUrl?: string | null;
 }
 
 export interface AuthzUserRecord {
@@ -20,6 +21,7 @@ export interface AuthzUserRecord {
   extraPermissions: string[]; // aditivas por usuário (grant-only)
   name?: string;
   email?: string;
+  avatarUrl?: string | null;
 }
 
 export interface AuthzUserRepo {

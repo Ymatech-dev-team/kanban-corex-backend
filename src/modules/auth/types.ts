@@ -9,6 +9,7 @@ export interface UserRecord {
   mustChangePassword: boolean;
   tokenVersion: number;
   deletedAt: Date | null;
+  avatarUrl: string | null;
 }
 
 export interface NewRefreshToken {
@@ -32,6 +33,8 @@ export interface UserRepo {
   setNewPassword(id: string, passwordHash: string): Promise<void>;
   /** Atualiza o nome do usuário (não mexe em sessão). */
   updateName(id: string, name: string): Promise<void>;
+  /** Define (ou limpa, com null) a URL pública do avatar. [conta-redesign] */
+  updateAvatar(id: string, avatarUrl: string | null): Promise<void>;
 }
 
 export interface RefreshTokenRepo {
