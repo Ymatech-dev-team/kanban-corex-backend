@@ -47,6 +47,15 @@ describe("workflow domain authorization and review", () => {
     expect(run(state, { type: "approve_review", cycle: 1 }, reviewer).stage).toBe("DONE");
   });
 
+  it("allows the human sponsor to submit and approve work executed by an agent", () => {
+    const agent = { ...reviewer, channel: "MCP" as const };
+    let state = run(initial(), { type: "transition", to: "READY" }, agent);
+    state = run(state, { type: "start_execution", executionId: "agent-run", agent: "claude-code" }, agent);
+    state = run(state, submit, reviewer);
+    expect(state.executorIds).toEqual([]);
+    expect(run(state, { type: "approve_review", cycle: 1 }, reviewer).stage).toBe("DONE");
+  });
+
   it("rejects self approval and approval by any previous executor", () => {
     expect(() => run(review(), { type: "approve_review", cycle: 1 }, { ...reviewer, userId: "dev" })).toThrow(/executor/i);
     let state = doing();

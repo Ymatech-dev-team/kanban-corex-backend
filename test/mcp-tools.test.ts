@@ -6,7 +6,7 @@ function setup(enabled=true){
  const session={userId:'user',orgId:'org',permissions:new Set([PERMISSIONS.tarefas_editar,PERMISSIONS.tarefas_revisar,PERMISSIONS.tarefas_criar]),mustChangePassword:false};
  const ctx={session,connectionId:'trusted-grant',clientId:'claude',channel:'MCP' as const,scopes:new Set(['tasks:read','tasks:update','tasks:create'])};
  const authorization={authorize:vi.fn().mockResolvedValue(ctx)};
- const task={id:'task',orgId:'org',projectId:'canonical-project',title:'Task',estimatedMinutes:240};
+ const task={id:'task',orgId:'org',projectId:'canonical-project',title:'Task',status:'DOING',estimatedMinutes:240};
  const tasks={getOrThrow:vi.fn().mockResolvedValue(task),listAll:vi.fn().mockResolvedValue({tasks:[task],hasMore:false})};
  const projects={list:vi.fn().mockResolvedValue([{id:'client',name:'Client'}])};
  const engagements={list:vi.fn().mockResolvedValue([{id:'engagement',projectId:'client',name:'Project',isGeneral:false,description:null}])};
@@ -16,6 +16,47 @@ function setup(enabled=true){
  return {authorization,tasks,engagements,workflow,tools,call,ctx};
 }
 describe('Corex MCP authorized tool adapters',()=>{
+ it.each(['IN_REVIEW', 'CHANGES_REQUESTED'])('returns authoritative %s status in detail and search without changing the stored legacy status', async (stage) => {
+   const s = setup();
+   s.workflow.load.mockResolvedValue({taskId:'task',version:6,stage});
+   expect(await s.call('get_task',{taskId:'task'})).toMatchObject({task:{status:stage,legacyStatus:'DOING',statusSource:'workflow'},status:stage,state:{stage}});
+   expect(await s.call('search_tasks',{})).toMatchObject({tasks:[{status:stage,legacyStatus:'DOING',statusSource:'workflow'}]});
+   expect(s.workflow.load).toHaveBeenLastCalledWith('org','task');
+   expect((await s.tasks.getOrThrow()).status).toBe('DOING');
+ });
+ it('keeps legacy status for tasks without a workflow', async () => {
+   const s = setup(); s.workflow.load.mockResolvedValue(null);
+   expect(await s.call('get_task',{taskId:'task'})).toMatchObject({task:{status:'DOING',legacyStatus:'DOING',statusSource:'legacy'},state:null});
+   expect(await s.call('search_tasks',{})).toMatchObject({tasks:[{status:'DOING',legacyStatus:'DOING',statusSource:'legacy'}]});
+ });
+ it('enriches a mixed page without changing its order or pagination', async () => {
+   const s = setup(); const task = await s.tasks.getOrThrow();
+   s.tasks.listAll.mockResolvedValue({tasks:[{...task,id:'review'},{...task,id:'legacy'}],hasMore:true,nextCursor:'next-page'});
+   s.workflow.load.mockImplementation(async (_org, taskId) => taskId === 'review' ? {taskId,version:6,stage:'IN_REVIEW'} : null);
+   expect(await s.call('search_tasks',{})).toMatchObject({tasks:[{id:'review',status:'IN_REVIEW'},{id:'legacy',status:'DOING'}],hasMore:true,nextCursor:'next-page'});
+   expect(s.workflow.load.mock.calls).toEqual([['org','review'],['org','legacy']]);
+ });
+ it('does not present the legacy status as authoritative when workflow lookup fails', async () => {
+   const s = setup(); s.workflow.load.mockRejectedValue(new Error('storage unavailable'));
+   await expect(s.call('get_task',{taskId:'task'})).rejects.toThrow('storage unavailable');
+   await expect(s.call('search_tasks',{})).rejects.toThrow('storage unavailable');
+ });
+ it('does not load workflows while disabled', async () => {
+   const s = setup(false);
+   expect(await s.call('get_task',{taskId:'task'})).toMatchObject({task:{status:'DOING',statusSource:'legacy'},state:null});
+   expect(await s.call('search_tasks',{})).toMatchObject({tasks:[{status:'DOING',statusSource:'legacy'}]});
+   expect(s.workflow.load).not.toHaveBeenCalled();
+ });
+ it('preserves the documented legacy search grouping for existing clients', async () => {
+   const s = setup();
+   await s.call('search_tasks',{status:'DOING'});
+   expect(s.tasks.listAll).toHaveBeenCalledWith(s.ctx.session,expect.objectContaining({status:'DOING'}));
+   expect(s.tools.find(t => t.name === 'search_tasks')?.description).toContain('agrupamento legado');
+ });
+ it('returns the same authoritative status after a successful workflow mutation', async () => {
+   const s=setup(); s.workflow.execute.mockResolvedValue({taskId:'task',version:3,stage:'IN_REVIEW'});
+   expect(await s.call('submit_for_review',{taskId:'task',operationId:'op',expectedVersion:2,summary:'Done',evidence:['proof'],reviewerId:'user',checks:[]})).toMatchObject({status:'IN_REVIEW',state:{stage:'IN_REVIEW'},nextAllowedStep:'HUMAN_REVIEW_IN_PANEL'});
+ });
  it.each([
    ['list_projects', {}], ['search_tasks', {}], ['get_task_timeline', { taskId: 'task' }], ['list_pending_actions', {}],
  ])('SDK accepts omitted default arguments for %s', async (name, args) => {

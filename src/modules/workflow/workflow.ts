@@ -167,7 +167,7 @@ export function applyWorkflowCommand(
         submittedBy: actor.userId, submittedAt: at, summary: command.summary, evidence: [...command.evidence],
         checks: structuredClone(command.checks), decision: "pending" });
       state.stage = "IN_REVIEW";
-      markExecutor(state, actor);
+      // Submission is coordination, not evidence of human implementation.
       break;
     }
     case "record_finding": {

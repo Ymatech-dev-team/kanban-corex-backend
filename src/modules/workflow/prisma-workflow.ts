@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { Prisma, type PrismaClient } from "@prisma/client";
 import { AppError } from "../../lib/errors.js";
+import { normalizeExecutorProvenance } from "./executor-provenance.js";
 import { applyWorkflowCommand, createWorkflow } from "./workflow.js";
 import { commandSchema, executeSchema, initSchema, createManagedTaskSchema, workflowStateSchema, requestActionSchema, resolveActionSchema, type ExecuteWorkflowInput, type InitializeWorkflowInput } from "./schemas.js";
 import type { WorkflowActor, WorkflowState } from "./types.js";
@@ -102,7 +103,7 @@ export class PrismaWorkflowStore implements WorkflowStore {
   private async loadLocked(tx: Tx, orgId: string, taskId: string): Promise<WorkflowState> {
     const rows = await tx.$queryRaw<Array<{ aggregate: unknown }>>`SELECT aggregate FROM task_workflows WHERE "taskId"=${taskId} AND "orgId"=${orgId} FOR UPDATE`;
     if (!rows[0]) throw new AppError("NAO_ENCONTRADO", "Fluxo ainda não ativado");
-    return workflowStateSchema.parse(rows[0].aggregate);
+    return this.normalizeExecutors(tx, workflowStateSchema.parse(rows[0].aggregate));
   }
 
   private async saveAggregate(tx: Tx, raw: WorkflowState, previousVersion: number) {
@@ -122,7 +123,14 @@ export class PrismaWorkflowStore implements WorkflowStore {
 
   async load(orgId: string, taskId: string): Promise<WorkflowState | null> {
     const rows = await this.db.$queryRaw<Array<{ aggregate: unknown }>>`SELECT aggregate FROM task_workflows WHERE "orgId"=${orgId} AND "taskId"=${taskId}`;
-    return rows[0] ? workflowStateSchema.parse(rows[0].aggregate) : null;
+    return rows[0] ? this.normalizeExecutors(this.db, workflowStateSchema.parse(rows[0].aggregate)) : null;
+  }
+
+  private async normalizeExecutors(db: Pick<Tx, "$queryRaw">, state: WorkflowState): Promise<WorkflowState> {
+    // Bounded repair for affected snapshots; all other aggregates avoid the history query.
+    if (state.version > 10_000 || !state.executorIds.some(id => state.reviews.some(review => review.submittedBy === id))) return state;
+    const events = await db.$queryRaw<unknown[]>`SELECT version,type,"actorId",channel,payload FROM workflow_events WHERE "orgId"=${state.orgId} AND "taskId"=${state.taskId} AND version<=${state.version} ORDER BY version ASC LIMIT 10000`;
+    return normalizeExecutorProvenance(state, events);
   }
 
   async events(orgId: string, taskId: string, beforeVersion?: number, limit = 51): Promise<unknown[]> {
@@ -211,18 +219,19 @@ export class PrismaWorkflowStore implements WorkflowStore {
       if (replay) return replay;
       const rows = await tx.$queryRaw<Array<{ aggregate: unknown }>>`SELECT aggregate FROM task_workflows WHERE "taskId"=${taskId} AND "orgId"=${actor.orgId} FOR UPDATE`;
       if (!rows[0]) throw new AppError("NAO_ENCONTRADO", "Fluxo ainda não ativado");
+      const current = await this.normalizeExecutors(tx, workflowStateSchema.parse(rows[0].aggregate));
       if (command.type === "record_finding") await this.assertResponsible(tx, actor, task, command.responsibleId);
       if (command.type === "submit_review") {
         if (!command.reviewerId) throw new AppError("VALIDACAO", "Escolha explicitamente quem deve revisar a entrega");
         await this.assertResponsible(tx, actor, task, command.reviewerId);
         const reviewers = await tx.$queryRaw<Array<{ id: string }>>`SELECT u.id FROM users u LEFT JOIN roles r ON r.id=u."roleId" AND r."orgId"=u."orgId" WHERE u.id=${command.reviewerId} AND u."orgId"=${actor.orgId} AND u."deletedAt" IS NULL AND (u."extraPermissions" && ARRAY['tarefas.revisar','tarefas.aprovar']::text[] OR r.permissions && ARRAY['tarefas.revisar','tarefas.aprovar']::text[])`;
         if (!reviewers.length) throw new AppError("VALIDACAO", "O revisor precisa de permissão de revisão ou aprovação");
-        if (workflowStateSchema.parse(rows[0].aggregate).executorIds.includes(command.reviewerId)) throw new AppError("VALIDACAO", "Escolha um revisor diferente dos executores humanos");
+        if (current.executorIds.includes(command.reviewerId)) throw new AppError("VALIDACAO", "Escolha um revisor diferente dos executores humanos");
         for (const name of ["typecheck", "lint", "test", "build"]) {
           if (!command.checks.some((check) => check.name === name && check.required)) throw new AppError("VALIDACAO", `Informe a verificação obrigatória ${name}`);
         }
       }
-      const result = applyWorkflowCommand(workflowStateSchema.parse(rows[0].aggregate), actor, command, input.expectedVersion, new Date().toISOString());
+      const result = applyWorkflowCommand(current, actor, command, input.expectedVersion, new Date().toISOString());
       const state = workflowStateSchema.parse(result.state);
       const updated = await tx.$executeRaw`UPDATE task_workflows SET stage=${state.stage},version=${state.version},"deliveryRevision"=${state.deliveryRevision},aggregate=${JSON.stringify(state)}::jsonb,"updatedAt"=now() WHERE "taskId"=${taskId} AND "orgId"=${actor.orgId} AND version=${input.expectedVersion}`;
       if (updated !== 1) throw new AppError("CONFLITO", "A versão da tarefa mudou");
