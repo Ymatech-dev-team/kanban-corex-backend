@@ -133,6 +133,7 @@ export function createMcpOAuth(options: McpOAuthOptions): McpOAuthService {
         try { await callback(req, res); } finally { req.url = originalUrl; delete mounted.originalUrl; }
         return;
       }
+      let stage = "interaction";
       try {
         const interaction = await provider.interactionDetails(req, res);
         if (path !== `${prefix}/interaction/${interaction.uid}`) { send(res, 400, "Invalid interaction"); return; }
@@ -150,28 +151,37 @@ export function createMcpOAuth(options: McpOAuthOptions): McpOAuthService {
         }
         if (req.method !== "POST") { send(res, 405, "Method not allowed"); return; }
         if (req.headers.origin !== issuerUrl.origin) { send(res, 403, "Origem inválida"); return; }
+        stage = "form";
         const body = await formBody(req);
         const csrfId = `${interaction.uid}:${body.get("csrf") ?? ""}`;
         const csrf = await csrfAdapter.find(csrfId);
         const expected = Buffer.from(typeof csrf?.value === "string" ? csrf.value : "");
         const actual = Buffer.from(body.get("csrf") ?? "");
         if (!expected.length || actual.length !== expected.length || !timingSafeEqual(actual, expected)) { send(res, 403, "Formulário expirado"); return; }
+        stage = "csrf_consume";
         await csrfAdapter.consume(csrfId);
-        if (body.get("decision") === "deny") { await completionAdapter.consume(interaction.uid); await provider.interactionFinished(req, res, { error: "access_denied", error_description: "User denied access" }); return; }
+        if (body.get("decision") === "deny") { stage = "deny_completion"; await completionAdapter.consume(interaction.uid); stage = "deny_finish"; await provider.interactionFinished(req, res, { error: "access_denied", error_description: "User denied access" }); return; }
         if (body.get("decision") !== "allow") { send(res, 400, "Decisão inválida"); return; }
+        stage = "authenticate";
         let authenticated: AuthzUserRecord;
         try { authenticated = await options.authenticate(body.get("email") ?? "", body.get("password") ?? ""); }
         catch { const nonce = randomBytes(18).toString("base64url"); send(res, 401, renderConsentError("Confira seu e-mail e senha. Se sua conta pede uma troca de senha, conclua essa etapa no painel.", path, nonce), "text/html; charset=utf-8", nonce); return; }
         const user = await options.users.findById(authenticated.id);
         if (!active(user) || user.orgId !== authenticated.orgId || user.tokenVersion !== authenticated.tokenVersion) { send(res, 403, "Entre no painel para atualizar sua conta"); return; }
+        stage = "allow_completion";
         await completionAdapter.consume(interaction.uid);
         const grant = new provider.Grant({ accountId: user.id, clientId });
         grant.addResourceScope(options.resource, scopes.join(" "));
         grant.addOIDCScope(requested.filter((s) => ["openid", "offline_access"].includes(s)).join(" "));
+        stage = "grant_save";
         const grantId = await grant.save();
+        stage = "connection_create";
         await options.connections.create({ id: grantId, userId: user.id, orgId: user.orgId, clientId, tokenVersion: user.tokenVersion, scopes, revokedAt: null, expiresAt: clock() + lifetime });
+        stage = "allow_finish";
         await provider.interactionFinished(req, res, { login: { accountId: user.id, remember: false }, consent: { grantId } }, { mergeWithLastSubmission: false });
       } catch {
+        // Only fixed internal stage labels; never log request data or exception details.
+        console.warn({ event: "mcp_consent_failed", stage });
         // No provider details, passwords, tokens or database messages in HTTP responses.
         if (!res.headersSent) send(res, 400, "Interação inválida ou expirada. Inicie a conexão novamente.");
         else if (!res.writableEnded) res.end();
