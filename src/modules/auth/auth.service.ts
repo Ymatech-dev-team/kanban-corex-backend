@@ -19,7 +19,8 @@ const INVALID = () => new AppError("NAO_AUTENTICADO", "email ou senha inválidos
 export class AuthService {
   constructor(private readonly d: AuthDeps) {}
 
-  async login(rawEmail: string, password: string) {
+  /** Shared by panel login and OAuth consent; does not issue a web session. */
+  async authenticateCredentials(rawEmail: string, password: string) {
     const email = rawEmail.trim().toLowerCase(); // normaliza (case-insensitive) [SEC-005]
     await this.d.lockout.assertNotLocked(email);
 
@@ -37,6 +38,11 @@ export class AuthService {
     }
 
     await this.d.lockout.recordSuccess(email);
+    return user;
+  }
+
+  async login(rawEmail: string, password: string) {
+    const user = await this.authenticateCredentials(rawEmail, password);
     const access = this.d.tokens.signAccess({
       userId: user.id,
       orgId: user.orgId,

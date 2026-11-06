@@ -50,6 +50,7 @@ export class AttachmentService {
     contentType: string,
     size: number,
   ): Promise<{ uploadUrl: string; pathname: string }> {
+    await this.repo.assertWritable?.(task.id, task.orgId);
     if (!ALLOWED_CONTENT_TYPES.includes(contentType)) {
       throw new AppError("VALIDACAO", "Tipo de arquivo não permitido (só imagem, PDF ou ZIP)");
     }
@@ -89,6 +90,7 @@ export class AttachmentService {
     pathname: string,
     fileName: string,
   ): Promise<AttachmentItem> {
+    await this.repo.assertWritable?.(task.id, task.orgId);
     const prefix = attachmentPrefix(task.id);
     if (!pathname.startsWith(prefix)) throw new AppError("VALIDACAO", "Anexo inválido para esta tarefa");
 

@@ -1,5 +1,8 @@
+import { z } from "zod";
+import { withLegacyTaskWrite } from "../workflow/legacy-write.js";
 import type { PrismaClient, Prisma } from "@prisma/client";
 import type { TaskStatus, TaskPriority } from "@sistema-tasks/contracts";
+import { AppError } from "../../lib/errors.js";
 import type {
   ActivityRecord,
   ActivityRepo,
@@ -61,8 +64,20 @@ function whereFilters(f: TaskFilterOpts): Prisma.TaskWhereInput {
   };
 }
 
+const taskCursorSchema = z.object({ dueDate: z.string().datetime().nullable(), id: z.string().min(1).max(128) }).strict();
+function decodeTaskCursor(value: string) {
+  try {
+    if (value.length > 1024 || !/^[A-Za-z0-9_-]+$/.test(value)) throw new Error("cursor");
+    return taskCursorSchema.parse(JSON.parse(Buffer.from(value, "base64url").toString("utf8")));
+  } catch { throw new AppError("VALIDACAO", "Cursor de tarefas inválido"); }
+}
+
 export class PrismaTaskRepo implements TaskRepo {
-  constructor(private readonly db: PrismaClient) {}
+  constructor(private readonly db: PrismaClient, private readonly workflowEnabled = false) {}
+
+  private legacyWrite<T>(id: string, write: (db: Prisma.TransactionClient) => Promise<T>): Promise<T> {
+    return withLegacyTaskWrite(this.db, this.workflowEnabled, id, write);
+  }
 
   async create(t: NewTask): Promise<TaskRecord> {
     const created = await this.db.task.create({
@@ -150,18 +165,31 @@ export class PrismaTaskRepo implements TaskRepo {
     if (f.assigneeId) {
       and.push({ OR: [{ assigneeId: f.assigneeId }, { extraAssignees: { some: { userId: f.assigneeId } } }] });
     }
-    const cap = f.limit ?? 500;
+    // Cursor only adds ordering predicates; it cannot replace tenant or access filters.
+    // Dated rows precede NULL due dates, and id breaks ties deterministically.
+    if (f.cursor) {
+      const cursor = decodeTaskCursor(f.cursor);
+      if (cursor.dueDate === null) and.push({ dueDate: null, id: { gt: cursor.id } });
+      else {
+        const dueDate = new Date(cursor.dueDate);
+        and.push({ OR: [{ dueDate: { gt: dueDate } }, { dueDate, id: { gt: cursor.id } }, { dueDate: null }] });
+      }
+    }
+    const cap = Math.min(Math.max(Number.isSafeInteger(f.limit) ? f.limit! : 500, 1), 500);
     const rows = await this.db.task.findMany({
       where: { orgId, deletedAt: null, ...(and.length ? { AND: and } : {}) }, // orgId sempre cerca o tenant [RF-A3]
       orderBy: [{ dueDate: { sort: "asc", nulls: "last" } }, { id: "asc" }], // total, determinística [RF-A7]
-      take: cap + 1, // +1 detecta truncamento sem cursor
+      take: cap + 1, // one lookahead row, never returned or used as the cursor
       include: withExtras,
     });
     const hasMore = rows.length > cap;
-    return { tasks: rows.slice(0, cap).map(toTask), hasMore };
+    const page = rows.slice(0, cap);
+    const last = page.at(-1);
+    const nextCursor = hasMore && last ? Buffer.from(JSON.stringify({ dueDate: last.dueDate?.toISOString() ?? null, id: last.id })).toString("base64url") : null;
+    return { tasks: page.map(toTask), hasMore, nextCursor };
   }
   async update(id: string, patch: TaskPatch): Promise<TaskRecord> {
-    const updated = await this.db.task.update({
+    const updated = await this.legacyWrite(id, (db) => db.task.update({
       where: { id },
       data: {
         title: patch.title,
@@ -172,11 +200,11 @@ export class PrismaTaskRepo implements TaskRepo {
         estimatedMinutes: patch.estimatedMinutes,
       },
       include: withExtras,
-    });
+    }));
     return toTask(updated);
   }
   async move(id: string, status: TaskStatus, position: number): Promise<TaskRecord> {
-    const updated = await this.db.task.update({ where: { id }, data: { status, position }, include: withExtras });
+    const updated = await this.legacyWrite(id, (db) => db.task.update({ where: { id }, data: { status, position }, include: withExtras }));
     return toTask(updated);
   }
   async softDelete(id: string, orgId: string, batchId: string): Promise<void> {
@@ -242,17 +270,17 @@ export class PrismaTaskRepo implements TaskRepo {
 
   async addExtraAssignee(taskId: string, userId: string, orgId: string): Promise<void> {
     // idempotente: se já existe, não duplica
-    await this.db.taskAssignee.upsert({
+    await withLegacyTaskWrite(this.db, this.workflowEnabled, taskId, (tx) => tx.taskAssignee.upsert({
       where: { taskId_userId: { taskId, userId } },
       create: { taskId, userId, orgId },
       update: {},
-    });
+    }), { orgId });
   }
   async removeExtraAssignee(taskId: string, userId: string, orgId: string): Promise<void> {
-    await this.db.taskAssignee.deleteMany({ where: { taskId, userId, orgId } });
+    await withLegacyTaskWrite(this.db, this.workflowEnabled, taskId, (tx) => tx.taskAssignee.deleteMany({ where: { taskId, userId, orgId } }), { orgId });
   }
   async promoteToPrimary(taskId: string, userId: string, orgId: string): Promise<void> {
-    await this.db.$transaction(async (tx) => {
+    await withLegacyTaskWrite(this.db, this.workflowEnabled, taskId, async (tx) => {
       const task = await tx.task.findFirst({ where: { id: taskId, orgId }, select: { assigneeId: true } });
       if (!task) return;
       // userId sai dos extras
@@ -266,10 +294,10 @@ export class PrismaTaskRepo implements TaskRepo {
         });
       }
       await tx.task.updateMany({ where: { id: taskId, orgId }, data: { assigneeId: userId } });
-    });
+    }, { orgId, alwaysTransaction: true });
   }
   async clearPrimaryPromotingOldest(taskId: string, orgId: string): Promise<void> {
-    await this.db.$transaction(async (tx) => {
+    await withLegacyTaskWrite(this.db, this.workflowEnabled, taskId, async (tx) => {
       const oldest = await tx.taskAssignee.findFirst({
         where: { taskId, orgId },
         orderBy: [{ createdAt: "asc" }, { userId: "asc" }],
@@ -278,7 +306,7 @@ export class PrismaTaskRepo implements TaskRepo {
       const newPrimary = oldest?.userId ?? null;
       if (newPrimary) await tx.taskAssignee.deleteMany({ where: { taskId, userId: newPrimary, orgId } });
       await tx.task.updateMany({ where: { id: taskId, orgId }, data: { assigneeId: newPrimary } });
-    });
+    }, { orgId, alwaysTransaction: true });
   }
 }
 
@@ -363,10 +391,10 @@ export class PrismaCommentRepo implements CommentRepo {
 }
 
 export class PrismaSubtaskRepo implements SubtaskRepo {
-  constructor(private readonly db: PrismaClient) {}
+  constructor(private readonly db: PrismaClient, private readonly workflowEnabled = false) {}
 
   async create(taskId: string, title: string, position: number): Promise<SubtaskRecord> {
-    return this.db.subtask.create({ data: { taskId, title, position } });
+    return withLegacyTaskWrite(this.db, this.workflowEnabled, taskId, (tx) => tx.subtask.create({ data: { taskId, title, position } }));
   }
   async listByTask(taskId: string): Promise<SubtaskRecord[]> {
     return this.db.subtask.findMany({ where: { taskId }, orderBy: { position: "asc" } });
@@ -376,10 +404,14 @@ export class PrismaSubtaskRepo implements SubtaskRepo {
     return s?.taskId ?? null;
   }
   async update(id: string, patch: { title?: string; done?: boolean }): Promise<SubtaskRecord> {
-    return this.db.subtask.update({ where: { id }, data: { title: patch.title, done: patch.done } });
+    const taskId = await this.findTaskId(id);
+    if (!taskId) throw new AppError("NAO_ENCONTRADO", "Subtarefa não encontrada");
+    return withLegacyTaskWrite(this.db, this.workflowEnabled, taskId, (tx) => tx.subtask.update({ where: { id }, data: { title: patch.title, done: patch.done } }));
   }
   async remove(id: string): Promise<void> {
-    await this.db.subtask.delete({ where: { id } });
+    const taskId = await this.findTaskId(id);
+    if (!taskId) throw new AppError("NAO_ENCONTRADO", "Subtarefa não encontrada");
+    await withLegacyTaskWrite(this.db, this.workflowEnabled, taskId, (tx) => tx.subtask.delete({ where: { id } }));
   }
   async maxPosition(taskId: string): Promise<number> {
     const agg = await this.db.subtask.aggregate({ where: { taskId }, _max: { position: true } });

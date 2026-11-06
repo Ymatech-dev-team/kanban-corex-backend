@@ -49,6 +49,11 @@ import { makeAttachmentRoutes } from "./modules/attachments/attachment.routes.js
 import { BoardFilterService } from "./modules/board-filters/board-filter.service.js";
 import { PrismaBoardFilterRepo } from "./modules/board-filters/prisma-repo.js";
 import { makeBoardFilterRoutes } from "./modules/board-filters/board-filter.routes.js";
+import { makeWorkflowRoutes } from "./modules/workflow/workflow.routes.js";
+import { PrismaWorkflowStore } from "./modules/workflow/prisma-workflow.js";
+import type { WorkflowStore } from "./modules/workflow/persistence.js";
+import { createMcpRuntime } from "./modules/mcp/runtime.js";
+import { makeMcpRoutes, type McpRouteOptions } from "./modules/mcp/mcp.routes.js";
 
 export interface AppDeps {
   authService?: AuthService;
@@ -65,6 +70,9 @@ export interface AppDeps {
   notificationService?: NotificationService;
   attachmentService?: AttachmentService;
   boardFilterService?: BoardFilterService;
+  workflowStore?: WorkflowStore;
+  workflowEnabled?: boolean;
+  mcpRuntime?: McpRouteOptions;
 }
 
 function tokenConfigFromEnv(): TokenConfig {
@@ -147,6 +155,9 @@ export function buildApp(deps: AppDeps = {}): FastifyInstance {
   let notificationService = deps.notificationService;
   let attachmentService = deps.attachmentService;
   let boardFilterService = deps.boardFilterService;
+  let workflowStore = deps.workflowStore;
+  let mcpRuntime = deps.mcpRuntime;
+  const workflowEnabled = deps.workflowEnabled ?? process.env.WORKFLOW_ENABLED === "true";
   if (process.env.DATABASE_URL) {
     tokenService = tokenService ?? new TokenService(tokenConfigFromEnv());
     const db = getPrisma();
@@ -162,8 +173,8 @@ export function buildApp(deps: AppDeps = {}): FastifyInstance {
     taskService =
       taskService ??
       new TaskService(
-        new PrismaTaskRepo(db),
-        new PrismaSubtaskRepo(db),
+        new PrismaTaskRepo(db, workflowEnabled),
+        new PrismaSubtaskRepo(db, workflowEnabled),
         accessRepo,
         new PrismaIdempotencyStore(db),
         new PrismaActivityRepo(db),
@@ -181,8 +192,13 @@ export function buildApp(deps: AppDeps = {}): FastifyInstance {
       engagementService ?? new EngagementService(new PrismaEngagementRepo(db), engagementMemberRepo, accessRepo);
     notificationService =
       notificationService ?? new NotificationService(new PrismaNotificationRepo(db), accessRepo);
-    attachmentService = attachmentService ?? new AttachmentService(new PrismaAttachmentRepo(db));
+    attachmentService = attachmentService ?? new AttachmentService(new PrismaAttachmentRepo(db, workflowEnabled));
     boardFilterService = boardFilterService ?? new BoardFilterService(new PrismaBoardFilterRepo(db));
+    if (workflowEnabled) workflowStore = workflowStore ?? new PrismaWorkflowStore(db);
+    if (process.env.MCP_ENABLED === "true" && !mcpRuntime) {
+      mcpRuntime = createMcpRuntime({ db, auth: authService, authenticate, tasks: taskService, projects: projectService, engagements: engagementService,
+        workflow: workflowStore ?? new PrismaWorkflowStore(db), workflowEnabled });
+    }
   }
 
   if (authService && tokenService) {
@@ -199,6 +215,7 @@ export function buildApp(deps: AppDeps = {}): FastifyInstance {
   }
   if (authenticate && authorizer && taskService) {
     typed.register(makeTaskRoutes(authenticate, authorizer, taskService));
+    if (workflowStore) typed.register(makeWorkflowRoutes(authenticate, authorizer, taskService, workflowStore, workflowEnabled));
   }
   if (authenticate && authorizer && memberService && roleService) {
     typed.register(makeAdminRoutes(authenticate, authorizer, memberService, roleService));
@@ -218,6 +235,8 @@ export function buildApp(deps: AppDeps = {}): FastifyInstance {
   if (authenticate && authorizer && boardFilterService) {
     typed.register(makeBoardFilterRoutes(authenticate, authorizer, boardFilterService));
   }
+
+  if (mcpRuntime) typed.register(makeMcpRoutes(mcpRuntime));
 
   return app;
 }

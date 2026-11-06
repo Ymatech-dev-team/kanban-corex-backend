@@ -63,6 +63,7 @@ export interface TaskFilterOpts {
 export interface ListAllResult {
   tasks: TaskRecord[];
   hasMore: boolean;
+  nextCursor?: string | null;
 }
 
 export interface TaskRepo {

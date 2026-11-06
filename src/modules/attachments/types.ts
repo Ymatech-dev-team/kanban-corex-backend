@@ -25,6 +25,8 @@ export interface NewAttachment {
 }
 
 export interface AttachmentRepo {
+  /** Early upload guard; create/delete still enforce atomically at persistence. */
+  assertWritable?(taskId: string, orgId: string): Promise<void>;
   /** Cria o registro (snapshot do nome do uploader). `pathname` é único (idempotência do confirm). */
   create(a: NewAttachment): Promise<AttachmentRecord>;
   listByTask(taskId: string, orgId: string): Promise<AttachmentRecord[]>;

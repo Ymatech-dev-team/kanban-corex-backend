@@ -1,5 +1,6 @@
 import type { PrismaClient } from "@prisma/client";
 import type { AttachmentRecord, AttachmentRepo, NewAttachment } from "./types.js";
+import { withLegacyTaskWrite } from "../workflow/legacy-write.js";
 
 type Row = {
   id: string;
@@ -18,12 +19,17 @@ function toRecord(a: Row): AttachmentRecord {
 }
 
 export class PrismaAttachmentRepo implements AttachmentRepo {
-  constructor(private readonly db: PrismaClient) {}
+  constructor(private readonly db: PrismaClient, private readonly workflowEnabled = false) {}
+
+  async assertWritable(taskId: string, orgId: string): Promise<void> {
+    await withLegacyTaskWrite(this.db, this.workflowEnabled, taskId, async () => undefined, { orgId });
+  }
 
   async create(a: NewAttachment): Promise<AttachmentRecord> {
     // snapshot do nome do uploader (sobrevive a remoção/renome). [detalhe-tarefa RF-A4]
-    const u = await this.db.user.findUnique({ where: { id: a.uploaderId }, select: { name: true } });
-    const row = await this.db.taskAttachment.create({
+    return withLegacyTaskWrite(this.db, this.workflowEnabled, a.taskId, async (tx) => {
+    const u = await tx.user.findUnique({ where: { id: a.uploaderId }, select: { name: true } });
+    const row = await tx.taskAttachment.create({
       data: {
         taskId: a.taskId,
         orgId: a.orgId,
@@ -37,6 +43,7 @@ export class PrismaAttachmentRepo implements AttachmentRepo {
       },
     });
     return toRecord(row);
+    }, { orgId: a.orgId });
   }
 
   async listByTask(taskId: string, orgId: string): Promise<AttachmentRecord[]> {
@@ -58,6 +65,8 @@ export class PrismaAttachmentRepo implements AttachmentRepo {
   }
 
   async delete(id: string, orgId: string): Promise<void> {
-    await this.db.taskAttachment.deleteMany({ where: { id, orgId } }); // orgId no WHERE (defense-in-depth)
+    const row = await this.db.taskAttachment.findFirst({ where: { id, orgId }, select: { taskId: true } });
+    if (!row) return;
+    await withLegacyTaskWrite(this.db, this.workflowEnabled, row.taskId, (tx) => tx.taskAttachment.deleteMany({ where: { id, orgId } }), { orgId });
   }
 }
