@@ -133,6 +133,16 @@ export function createMcpOAuth(options: McpOAuthOptions): McpOAuthService {
         try { await callback(req, res); } finally { req.url = originalUrl; delete mounted.originalUrl; }
         return;
       }
+      // Vercel may detach req.socket when the request body ends. The provider
+      // creates a fresh Koa context during completion and still needs the original
+      // transport and signed-cookie headers. Preserve this request's metadata only;
+      // never fabricate TLS or change the trust-proxy / Origin checks.
+      const completionRequest = Object.create(req, {
+        socket: { value: req.socket },
+        headers: { value: { ...req.headers } },
+        url: { value: req.url },
+        method: { value: req.method },
+      }) as IncomingMessage;
       let stage = "interaction";
       try {
         const interaction = await provider.interactionDetails(req, res);
@@ -160,7 +170,7 @@ export function createMcpOAuth(options: McpOAuthOptions): McpOAuthService {
         if (!expected.length || actual.length !== expected.length || !timingSafeEqual(actual, expected)) { send(res, 403, "Formulário expirado"); return; }
         stage = "csrf_consume";
         await csrfAdapter.consume(csrfId);
-        if (body.get("decision") === "deny") { stage = "deny_completion"; await completionAdapter.consume(interaction.uid); stage = "deny_finish"; await provider.interactionFinished(req, res, { error: "access_denied", error_description: "User denied access" }); return; }
+        if (body.get("decision") === "deny") { stage = "deny_completion"; await completionAdapter.consume(interaction.uid); stage = "deny_finish"; await provider.interactionFinished(completionRequest, res, { error: "access_denied", error_description: "User denied access" }); return; }
         if (body.get("decision") !== "allow") { send(res, 400, "Decisão inválida"); return; }
         stage = "authenticate";
         let authenticated: AuthzUserRecord;
@@ -178,7 +188,7 @@ export function createMcpOAuth(options: McpOAuthOptions): McpOAuthService {
         stage = "connection_create";
         await options.connections.create({ id: grantId, userId: user.id, orgId: user.orgId, clientId, tokenVersion: user.tokenVersion, scopes, revokedAt: null, expiresAt: clock() + lifetime });
         stage = "allow_finish";
-        await provider.interactionFinished(req, res, { login: { accountId: user.id, remember: false }, consent: { grantId } }, { mergeWithLastSubmission: false });
+        await provider.interactionFinished(completionRequest, res, { login: { accountId: user.id, remember: false }, consent: { grantId } }, { mergeWithLastSubmission: false });
       } catch (error) {
         const errorName = error instanceof Error ? error.name : "";
         const category = ["SessionNotFound", "TypeError", "PrismaClientKnownRequestError", "PrismaClientValidationError", "Error"].includes(errorName) ? errorName : "other";

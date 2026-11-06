@@ -9,7 +9,7 @@ const jwks = { keys: [{ ...privateKey.export({ format: "jwk" }), kid: "test-only
 const user = { id: "user", orgId: "org", tokenVersion: 2, deletedAt: null, mustChangePassword: false, rolePermissions: [], extraPermissions: [] };
 const cleanup: Array<() => Promise<void>> = [];
 afterEach(async () => { for (const close of cleanup.splice(0)) await close(); });
-async function setup() {
+async function setup(dropSocketAfterBody = false) {
   const artifacts = new Map<string, OAuthRecord>(); const grants = new Map<string, McpConnection>();
   const records: OAuthRecordStore = {
     async put(r) { const old=artifacts.get(`${r.model}:${r.id}`); artifacts.set(`${r.model}:${r.id}`, structuredClone({ ...r,payload:{...r.payload,...(old?.payload.consumed ? {consumed:old.payload.consumed}:{})} })); },
@@ -19,7 +19,7 @@ async function setup() {
     async revokeGrant(id) { for(const [key,r] of artifacts)if(r.payload.grantId===id || (r.model==='Grant' && r.id===id))artifacts.delete(key);const c=grants.get(id);if(c)c.revokedAt=new Date(); },
   };
   const connections: McpConnectionStore = { async create(c) { if(grants.has(c.id))throw new Error('duplicate');grants.set(c.id,structuredClone(c)); }, async findById(id){return structuredClone(grants.get(id)??null);}, async list(u,o){return [...grants.values()].filter(c=>c.userId===u&&c.orgId===o);}, async revoke(id,u,o){const c=grants.get(id);if(!c||c.userId!==u||c.orgId!==o)return false;await records.revokeGrant(id);return true;} };
-  const server=createServer((req,res)=> { void service.handle(req,res).catch(()=>{res.statusCode=500;res.end('error');}); });
+  const server=createServer((req,res)=> { if(dropSocketAfterBody)req.once("end",()=>{Object.defineProperty(req,"socket",{value:null,configurable:true});}); void service.handle(req,res).catch(()=>{res.statusCode=500;res.end('error');}); });
   await new Promise<void>((resolve,reject)=>{server.once("error",reject);server.listen(0,"127.0.0.1",resolve);});
   cleanup.push(()=>new Promise<void>(resolve=>{server.closeAllConnections();server.close(()=>resolve());}));
   const address=server.address();if(!address || typeof address==='string')throw new Error('address');
@@ -54,6 +54,15 @@ async function setup() {
   return {base,issuer,resource,service,records,connections,users,authenticate,request,authorize,approve,exchange};
 }
 describe('real maintained OAuth provider',()=>{
+  it('completes denial when the serverless request loses its socket after body consumption',async()=>{
+    const s=await setup(true);const {interaction,csrf}=await s.authorize();
+    const r=await s.request(interaction,{method:'POST',headers:{origin:s.base,'content-type':'application/x-www-form-urlencoded'},body:new URLSearchParams({csrf,decision:'deny'})});
+    expect(r.status).toBe(303);expect(s.authenticate).not.toHaveBeenCalled();
+  });
+  it('completes authorization when the serverless request loses its socket after body consumption',async()=>{
+    const s=await setup(true);const code=await s.approve();
+    expect((await s.exchange(code)).status).toBe(200);
+  });
   it('serves consent with a referrer policy compatible with native same-origin forms',async()=>{
     const s=await setup();const {interaction}=await s.authorize();
     const response=await s.request(interaction);
