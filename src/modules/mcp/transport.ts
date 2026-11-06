@@ -65,6 +65,6 @@ export function createMcpTransport(options: McpTransportOptions) {
       return sdk.fetch(request, { authInfo: auth });
     },
   };
-  const node = toNodeHandler(handler);
+  const node = toNodeHandler(handler, { maxRequestBodySize: 128 * 1024 });
   return { ...handler, async handle(req: IncomingMessage, res: ServerResponse) { await node(req, res); } };
 }

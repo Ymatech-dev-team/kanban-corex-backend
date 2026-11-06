@@ -9,13 +9,29 @@ export interface McpConnectionStore {
   list(userId: string, orgId: string): Promise<McpConnection[]>;
   revoke(id: string, userId: string, orgId: string): Promise<boolean>;
 }
-type DB = Pick<PrismaClient, "$queryRawUnsafe" | "$executeRawUnsafe">;
+type DB = Pick<PrismaClient, "$queryRawUnsafe" | "$executeRawUnsafe" | "$transaction">;
 type ConnectionRow = Omit<McpConnection, "expiresAt"> & { expiresAt: bigint };
 const connection = (row: ConnectionRow): McpConnection => ({ ...row, expiresAt: Number(row.expiresAt) });
 
 /** All values use positional SQL parameters. No table/column identifiers come from callers. */
 export class PrismaOAuthStore implements OAuthRecordStore, McpConnectionStore {
   constructor(private readonly db: DB) {}
+  async purgeExpired(beforeEpochSeconds: number, batchSize: number): Promise<number> {
+    if (!Number.isSafeInteger(beforeEpochSeconds) || beforeEpochSeconds <= 0 || !Number.isSafeInteger(batchSize) || batchSize < 1 || batchSize > 500) {
+      throw new Error("Invalid OAuth retention bounds");
+    }
+    // Row locks exclude concurrently renewed artifacts; non-expiring rows never match.
+    // Connections remain as revocation/audit records. Never inspect or return payloads.
+    return this.db.$transaction(async (tx) => {
+      // Real PostgreSQL deadlines stop work, unlike abandoning a Promise on timeout.
+      await tx.$queryRawUnsafe(`SELECT set_config('statement_timeout',$1,true), set_config('lock_timeout',$2,true)`, '1500ms', '500ms');
+      return tx.$executeRawUnsafe(`WITH expired AS (
+        SELECT model,id FROM mcp_oauth_artifacts WHERE "expiresAt" <= $1
+        ORDER BY "expiresAt",model,id LIMIT $2 FOR UPDATE SKIP LOCKED
+      ) DELETE FROM mcp_oauth_artifacts AS artifact USING expired
+        WHERE artifact.model=expired.model AND artifact.id=expired.id`, beforeEpochSeconds, batchSize);
+    }, { maxWait: 1000, timeout: 2500 });
+  }
   async put(record: OAuthRecord): Promise<void> {
     // A late save must never clear a concurrently committed consumed marker.
     await this.db.$executeRawUnsafe(`INSERT INTO mcp_oauth_artifacts (model,id,payload,"expiresAt") VALUES ($1,$2,$3::jsonb,$4)

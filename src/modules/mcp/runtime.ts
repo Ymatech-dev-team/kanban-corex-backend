@@ -9,6 +9,7 @@ import type { ProjectService } from '../projects/project.service.js';
 import type { EngagementService } from '../engagements/engagement.service.js';
 import type { TaskService } from '../tasks/task.service.js';
 import type { WorkflowStore } from '../workflow/persistence.js';
+import { createMcpOperationalGuard, createUpstashMcpOperationalStore } from './operational-guards.js';
 import { McpAuthorization } from './authorization.js';
 import { createMcpOAuth } from './oauth/provider.js';
 import { PrismaOAuthStore } from './oauth/prisma-store.js';
@@ -46,6 +47,10 @@ export function createMcpRuntime(deps: {
   const config = mcpConfigFromEnv(env);
   const users = new PrismaAuthzUserRepo(deps.db);
   const records = new PrismaOAuthStore(deps.db);
+  const operationalGuard = createMcpOperationalGuard({
+    store: createUpstashMcpOperationalStore(env, config.resource), retention: records, vercel: env.VERCEL === '1',
+    report: event => console.warn(JSON.stringify({ event })),
+  });
   const oauth = createMcpOAuth({ ...config, records, connections: records, users,
     async authenticate(email, password) {
       const verified = await deps.auth.authenticateCredentials(email, password);
@@ -62,5 +67,5 @@ export function createMcpRuntime(deps: {
   });
   const tools = createCorexMcpTools({ authorization, tasks: deps.tasks, projects: deps.projects, engagements: deps.engagements, workflow: deps.workflow, workflowEnabled: deps.workflowEnabled });
   const transport = createMcpTransport({ ...config, verifier: oauth, authorization, tools });
-  return { issuer: config.issuer, resource: config.resource, oauth, transport, connections: records, authenticate: deps.authenticate };
+  return { issuer: config.issuer, resource: config.resource, operationalGuard, oauth, transport, connections: records, authenticate: deps.authenticate };
 }

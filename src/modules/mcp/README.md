@@ -41,7 +41,7 @@ Registro dinâmico de clientes está desabilitado. É necessário configurar o c
 
 `PrismaOAuthStore` grava artifacts do provider e conexões no SQL019; consumo de code/refresh/CSRF usa UPDATE condicional atômico e upsert conserva consumed. Concessões não são sobrescritas para reativação. Revogação marca conexão e remove artifacts numa instrução SQL; usuário/org restringem a revogação pelo painel. Erros de banco não viram autenticação bem-sucedida nem ativam fallback de memória.
 
-Payloads de artifacts são sensíveis e podem conter material de token; não disponibilizar estas tabelas via APIs, logs, analytics ou exportações comuns. Implantação deve usar banco criptografado em repouso e papel de aplicação com acesso restrito. Este adapter não adiciona criptografia de coluna. A política de retenção deve eliminar artifacts expirados em lotes, preservando conexões como trilha de revogação; não há job agendado incluído. O acesso de banco atual precisa ser revisto antes de exposição pública.
+Payloads de artifacts são sensíveis e podem conter material de token; não disponibilizar estas tabelas via APIs, logs, analytics ou exportações comuns. Implantação deve usar banco criptografado em repouso e papel de aplicação com acesso restrito. Este adapter não adiciona criptografia de coluna. A retenção oportunista descrita abaixo elimina artifacts expirados em lotes, preservando conexões como trilha de revogação; não há job agendado incluído. O acesso de banco atual precisa ser revisto antes de exposição pública.
 
 ## Evidência e próximos gates
 
@@ -53,4 +53,25 @@ Fontes oficiais: [oidc-provider 9.13.3](https://github.com/panva/node-oidc-provi
 
 SQL018/019 aplicado e verificado no banco expressamente autorizado pelo dono. Smoke real por HTTP (montagem Fastify, biblioteca OAuth, SDK e PostgreSQL): login da conta existente, PKCE, concessão persistente, duas criações simultâneas deduplicadas, conflito de payload/referência externa, checkpoint, solicitação/resposta humana, bloqueio de edição legada/aceite prematuro, dois ciclos no mesmo card/achado e revogação do token. Evidências locais em `../../../../execucao/navegacao-mcp/smoke-live-http-2.txt`. Este smoke não comprova conexão pelo cliente Claude remoto.
 
-Antes de exposição pública, configurar rate limiting no ingress para `/oauth/*` e `/mcp`, retenção de artifacts expirados e revisar os avisos de dependências preexistentes (comparação atual/original não identificou avisos introduzidos pela feature). Flags de MCP continuam desligadas por padrão. Não usar chaves efêmeras de smoke em implantação real.
+O guard distribuído e a retenção oportunista abaixo são obrigatórios no runtime MCP. Antes de exposição pública, validar configuração Upstash e o ingress real, além de revisar os avisos de dependências (baseline registrado separadamente). Flags de MCP continuam desligadas por padrão. Não usar chaves efêmeras de smoke em implantação real.
+
+
+## Guard operacional público
+
+O runtime sempre exige `UPSTASH_REDIS_REST_URL` HTTPS e `UPSTASH_REDIS_REST_TOKEN`, inclusive fora de produção. Não há fallback em memória ou exceção de teste no runtime real. Testes injetam portas falsas explicitamente; a prop opcional das rotas existe para essa injeção e não desabilita o guard criado pelo runtime.
+
+Antes de ler o body ou chamar OAuth/SDK, todos os endpoints raw e discovery consomem limites Upstash distribuídos por recurso. Janelas deslizantes de1min: global1200; OAuth global60; por IP OAuth leitura60, OAuth escrita20, MCP120 e metadata120. Rotacionar URL/interação não cria outro bucket. Identificadores de IP são hashes; tokens, cookies, query strings e corpos não integram chaves/logs. Analytics e cache local do limiter estão desabilitados.
+
+Excesso responde429 com `Retry-After`; erro Redis, resposta inválida ou `reason=timeout` responde503 sem chamar o handler. O timeout padrão do SDK Upstash pode retornar `success=true`: o guard rejeita explicitamente esse resultado. Requisições Redis usam limite1500ms sem retries; limiter usa1000ms. Fora da Vercel, o IP vem do socket e todos os forwarded headers são ignorados. Somente `VERCEL=1` habilita leitura de `x-vercel-forwarded-for` controlado pelo ingress Vercel; valor ausente, inválido ou lista ambígua é recusado. Outro proxy/host exige adaptar a fronteira de confiança antes de habilitar MCP.
+
+O adaptador Node MCP também limita o body em128KiB antes de autenticação/conversão Web Request, igual ao limite interno do SDK. O painel mantém seus mecanismos existentes de autenticação/rate limiting.
+
+## Retenção operacional
+
+Após o rate gate permitir a requisição, um `SET NX EX60` por recurso e compartilhado entre instâncias elege no máximo uma limpeza por minuto. Não liberar o lease é intencional: ele também serve como throttle. A operação é aguardada; não há Promise solta que possa morrer no fim da função serverless.
+
+Cada limpeza remove no máximo500 artifacts com expiração há pelo menos24h, com filtro indexado, locks `FOR UPDATE SKIP LOCKED` e parâmetros SQL. Artifacts sem expiração e conexões não são apagados. Executa em transação com maxWait1000ms/timeout2500ms e prazos PostgreSQL locais statement_timeout1500ms/lock_timeout500ms; um timeout interrompe o trabalho em vez de apenas abandonar a Promise. Falha gera somente evento `mcp_retention_failed` e preserva o atendimento já autorizado pelo rate gate.
+
+A capacidade nominal é500 artifacts/min em tráfego contínuo, com emissões OAuth limitadas globalmente a60 requests/min. Isso excede o volume esperado do fluxo atual code/consent/refresh, mas não é promessa de tamanho máximo do banco: sem tráfego não há limpeza, indisponibilidade pode acumular backlog e mudanças no provider podem alterar a taxa de criação. Monitorar semanalmente a contagem de artifacts vencidos há24h e a idade do mais antigo, sem ler payloads. Se backlog crescer continuamente ou não cair após tráfego normal, verificar `mcp_retention_failed` e executar drenagem operacional em lotes pela mesma rotina; não remover conexões/ativos nem executar DELETE irrestrito. Não foi criado cron ou serviço novo.
+
+Fontes: [headers controlados pela Vercel](https://vercel.com/docs/headers/request-headers#x-vercel-forwarded-for), [semântica de timeout Upstash](https://upstash.com/docs/redis/sdks/ratelimit-ts/features#timeout).
