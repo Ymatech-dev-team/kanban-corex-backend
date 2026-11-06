@@ -179,9 +179,13 @@ export function createMcpOAuth(options: McpOAuthOptions): McpOAuthService {
         await options.connections.create({ id: grantId, userId: user.id, orgId: user.orgId, clientId, tokenVersion: user.tokenVersion, scopes, revokedAt: null, expiresAt: clock() + lifetime });
         stage = "allow_finish";
         await provider.interactionFinished(req, res, { login: { accountId: user.id, remember: false }, consent: { grantId } }, { mergeWithLastSubmission: false });
-      } catch {
+      } catch (error) {
+        const errorName = error instanceof Error ? error.name : "";
+        const category = ["SessionNotFound", "TypeError", "PrismaClientKnownRequestError", "PrismaClientValidationError", "Error"].includes(errorName) ? errorName : "other";
+        const message = error instanceof Error ? error.message : "";
+        const reason = message.includes("secure cookie") ? "secure_cookie" : message.includes("headers") ? "headers" : message.includes("session id cookie") ? "cookie_missing" : message.includes("session not found") ? "session_missing" : message.includes("ttl") ? "ttl" : "other";
         // Only fixed internal stage labels; never log request data or exception details.
-        console.warn({ event: "mcp_consent_failed", stage });
+        console.warn({ event: "mcp_consent_failed", stage, category, reason });
         // No provider details, passwords, tokens or database messages in HTTP responses.
         if (!res.headersSent) send(res, 400, "Interação inválida ou expirada. Inicie a conexão novamente.");
         else if (!res.writableEnded) res.end();
