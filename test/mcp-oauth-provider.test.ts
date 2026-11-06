@@ -67,7 +67,8 @@ describe('real maintained OAuth provider',()=>{
     const s=await setup();const {interaction}=await s.authorize();
     const response=await s.request(interaction);
     expect(response.headers.get('referrer-policy')).toBe('same-origin');
-    expect(response.headers.get('content-security-policy')).toContain("form-action 'self'");
+    expect(response.headers.get('content-security-policy')).toContain("form-action 'self' https://client.example.test;");
+    expect(response.headers.get('content-security-policy')).not.toContain("*");
   });
   it.each(['null',''])('rejects opaque or missing Origin (%s) before authentication',async(origin)=>{
     const s=await setup();const {interaction,csrf}=await s.authorize();

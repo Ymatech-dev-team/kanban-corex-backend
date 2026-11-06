@@ -30,7 +30,7 @@ function configuredUrl(value: string) {
   return url;
 }
 function active(user: AuthzUserRecord | null): user is AuthzUserRecord { return !!user && user.deletedAt === null && !user.mustChangePassword; }
-function send(res: ServerResponse, status: number, body: string, contentType = "text/plain; charset=utf-8", nonce?: string) {
+function send(res: ServerResponse, status: number, body: string, contentType = "text/plain; charset=utf-8", nonce?: string, callbackOrigin?: string) {
   res.statusCode = status;
   res.setHeader("Content-Type", contentType);
   res.setHeader("Cache-Control", "no-store");
@@ -38,7 +38,7 @@ function send(res: ServerResponse, status: number, body: string, contentType = "
   // submission verifiable without disclosing interaction URLs to other origins.
   res.setHeader("Referrer-Policy", "same-origin");
   res.setHeader("X-Content-Type-Options", "nosniff");
-  res.setHeader("Content-Security-Policy", `default-src 'none'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'${nonce ? `; style-src 'nonce-${nonce}'` : ""}`);
+  res.setHeader("Content-Security-Policy", `default-src 'none'; form-action 'self'${callbackOrigin ? ` ${callbackOrigin}` : ""}; frame-ancestors 'none'; base-uri 'none'${nonce ? `; style-src 'nonce-${nonce}'` : ""}`);
   res.end(body);
 }
 async function formBody(req: IncomingMessage) {
@@ -150,13 +150,18 @@ export function createMcpOAuth(options: McpOAuthOptions): McpOAuthService {
         const requested = String(interaction.params.scope ?? "").split(" ");
         const scopes = MCP_SCOPES.filter((scope) => requested.includes(scope));
         const clientId = String(interaction.params.client_id ?? "");
-        if (!scopes.length || !options.clients.some((c) => c.client_id === clientId)) { send(res, 400, "Invalid scopes or client"); return; }
+        const client = options.clients.find((c) => c.client_id === clientId);
+        const redirectUri = String(interaction.params.redirect_uri ?? "");
+        if (!scopes.length || !client?.redirect_uris?.includes(redirectUri)) { send(res, 400, "Invalid scopes or client"); return; }
+        // Chromium/WebKit apply form-action to the final OAuth redirect as well.
+        // Only admit the origin of this interaction's exact registered callback.
+        const callbackOrigin = configuredUrl(redirectUri).origin;
         if (req.method === "GET") {
           const csrf = randomBytes(32).toString("base64url");
           await csrfAdapter.upsert(`${interaction.uid}:${csrf}`, { value: csrf }, 600);
           await completionAdapter.upsert(interaction.uid, {}, 600);
           const nonce = randomBytes(18).toString("base64url");
-          send(res, 200, renderConsent({ clientId, scopes, csrf, nonce }), "text/html; charset=utf-8", nonce);
+          send(res, 200, renderConsent({ clientId, scopes, csrf, nonce }), "text/html; charset=utf-8", nonce, callbackOrigin);
           return;
         }
         if (req.method !== "POST") { send(res, 405, "Method not allowed"); return; }
