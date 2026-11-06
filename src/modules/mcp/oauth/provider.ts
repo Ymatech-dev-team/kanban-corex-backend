@@ -183,7 +183,7 @@ export function createMcpOAuth(options: McpOAuthOptions): McpOAuthService {
         const errorName = error instanceof Error ? error.name : "";
         const category = ["SessionNotFound", "TypeError", "PrismaClientKnownRequestError", "PrismaClientValidationError", "Error"].includes(errorName) ? errorName : "other";
         const message = error instanceof Error ? error.message : "";
-        const reason = message.includes("secure cookie") ? "secure_cookie" : message.includes("headers") ? "headers" : message.includes("session id cookie") ? "cookie_missing" : message.includes("session not found") ? "session_missing" : message.includes("ttl") ? "ttl" : "other";
+        const reason = message.includes("encrypted") ? "socket_unavailable" : message.includes("secure cookie") ? "secure_cookie" : message.includes("headers") ? "headers" : message.includes("session id cookie") ? "cookie_missing" : message.includes("session not found") ? "session_missing" : message.includes("ttl") ? "ttl" : "other";
         // Only fixed internal stage labels; never log request data or exception details.
         console.warn({ event: "mcp_consent_failed", stage, category, reason });
         // No provider details, passwords, tokens or database messages in HTTP responses.
