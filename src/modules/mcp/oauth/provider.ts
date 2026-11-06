@@ -34,7 +34,9 @@ function send(res: ServerResponse, status: number, body: string, contentType = "
   res.statusCode = status;
   res.setHeader("Content-Type", contentType);
   res.setHeader("Cache-Control", "no-store");
-  res.setHeader("Referrer-Policy", "no-referrer");
+  // Native form POSTs send Origin: null under no-referrer. Keep same-origin
+  // submission verifiable without disclosing interaction URLs to other origins.
+  res.setHeader("Referrer-Policy", "same-origin");
   res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("Content-Security-Policy", `default-src 'none'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'${nonce ? `; style-src 'nonce-${nonce}'` : ""}`);
   res.end(body);

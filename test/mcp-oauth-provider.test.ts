@@ -54,6 +54,19 @@ async function setup() {
   return {base,issuer,resource,service,records,connections,users,authenticate,request,authorize,approve,exchange};
 }
 describe('real maintained OAuth provider',()=>{
+  it('serves consent with a referrer policy compatible with native same-origin forms',async()=>{
+    const s=await setup();const {interaction}=await s.authorize();
+    const response=await s.request(interaction);
+    expect(response.headers.get('referrer-policy')).toBe('same-origin');
+    expect(response.headers.get('content-security-policy')).toContain("form-action 'self'");
+  });
+  it.each(['null',''])('rejects opaque or missing Origin (%s) before authentication',async(origin)=>{
+    const s=await setup();const {interaction,csrf}=await s.authorize();
+    const headers:Record<string,string>={'content-type':'application/x-www-form-urlencoded'};
+    if(origin)headers.origin=origin;
+    const response=await s.request(interaction,{method:'POST',headers,body:new URLSearchParams({csrf,email:'person@example.test',password:'test-password',decision:'allow'})});
+    expect(response.status).toBe(403);expect(s.authenticate).not.toHaveBeenCalled();
+  });
   it('a denied interaction cannot later be approved from another previously loaded form',async()=>{const s=await setup();const {interaction,csrf}=await s.authorize();const nextHtml=await(await s.request(interaction)).text();const other=nextHtml.match(/name="csrf" value="([^"]+)"/)![1];const post=(value:string,decision:string)=>s.request(interaction,{method:'POST',headers:{origin:s.base,'content-type':'application/x-www-form-urlencoded'},body:new URLSearchParams({csrf:value,email:'person@example.test',password:'test-password',decision})});expect((await post(csrf,'deny')).status).toBe(303);expect((await post(other,'allow')).status).not.toBe(303);expect(await s.connections.list('user','org')).toEqual([]);});
 
   it('offers a working retry after incorrect password without reviving consumed CSRF',async()=>{const s=await setup();const {interaction,csrf}=await s.authorize();const post=(value:string,password:string)=>s.request(interaction,{method:'POST',headers:{origin:s.base,'content-type':'application/x-www-form-urlencoded'},body:new URLSearchParams({csrf:value,email:'person@example.test',password,decision:'allow'})});expect((await post(csrf,'wrong')).status).toBe(401);const retry=await s.request(interaction);const html=await retry.text();const next=html.match(/name="csrf" value="([^"]+)"/)![1];expect(next).not.toBe(csrf);expect((await post(next,'test-password')).status).toBe(303);expect((await post(csrf,'test-password')).status).not.toBe(303);});
