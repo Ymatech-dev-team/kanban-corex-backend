@@ -12,11 +12,12 @@ export interface McpOperationalStore {
 }
 export interface McpRetentionStore { purgeExpired(beforeEpochSeconds: number, batchSize: number): Promise<number> }
 export interface McpOperationalGuard { check(request: Pick<IncomingMessage,'headers'|'method'|'socket'>, kind: McpEndpointKind): Promise<void> }
+export type McpOperationalEvent = 'mcp_retention_failed' | 'guard_ip_unavailable' | 'guard_store_unavailable' | 'guard_store_timeout' | 'guard_store_malformed';
 export interface McpOperationalOptions {
   store: McpOperationalStore; retention: McpRetentionStore; vercel: boolean;
   now?: () => number;
   /** Only fixed event names; never attach request, exception text, tokens, IP or payload. */
-  report?: (event: 'mcp_retention_failed') => void;
+  report?: (event: McpOperationalEvent) => void;
 }
 export class McpOperationalError extends Error {
   constructor(readonly statusCode: 429 | 503, readonly retryAfterSeconds: number) {
@@ -31,15 +32,26 @@ export function createMcpOperationalGuard(options: McpOperationalOptions): McpOp
       // The Vercel proxy owns this header only on an actual Vercel deployment.
       // Never trust client-provided XFF/Forwarded outside that boundary.
       const ip = options.vercel ? request.headers['x-vercel-forwarded-for'] : request.socket.remoteAddress;
-      if (typeof ip !== 'string' || !isIP(ip)) throw new McpOperationalError(503, 5);
+      if (typeof ip !== 'string' || !isIP(ip)) {
+        options.report?.('guard_ip_unavailable');
+        throw new McpOperationalError(503, 5);
+      }
       const key = createHash('sha256').update(ip).digest('hex');
       const bucket: McpRateBucket = kind === 'oauth' && !['GET', 'HEAD', 'OPTIONS'].includes(request.method ?? '') ? 'oauth-write' : kind;
       async function consume(bucketName: McpRateBucket, identifier: string) {
         let result: McpRateDecision;
         try { result = await options.store.limit(bucketName, identifier); }
-        catch { throw new McpOperationalError(503, 5); }
+        catch {
+          options.report?.('guard_store_unavailable');
+          throw new McpOperationalError(503, 5);
+        }
         // Upstash's SDK intentionally returns success:true on its timeout. Reject it.
-        if (!result || result.reason === 'timeout' || typeof result.success !== 'boolean' || !Number.isFinite(result.reset)) {
+        if (result?.reason === 'timeout') {
+          options.report?.('guard_store_timeout');
+          throw new McpOperationalError(503, 5);
+        }
+        if (!result || typeof result.success !== 'boolean' || !Number.isFinite(result.reset)) {
+          options.report?.('guard_store_malformed');
           throw new McpOperationalError(503, 5);
         }
         if (!result.success) throw new McpOperationalError(429, Math.min(3600, Math.max(1, Math.ceil((result.reset - now) / 1000))));

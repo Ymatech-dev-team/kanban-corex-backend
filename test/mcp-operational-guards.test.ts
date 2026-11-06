@@ -11,6 +11,21 @@ function setup(vercel=false) {
   return { store,retention,report,guard:createMcpOperationalGuard({store,retention,vercel,now:()=>now,report}) };
 }
 describe('distributed raw MCP/OAuth operational guard',()=>{
+  it.each([
+    ['ip','guard_ip_unavailable'], ['exception','guard_store_unavailable'],
+    ['timeout','guard_store_timeout'], ['malformed','guard_store_malformed'],
+  ])('reports only a fixed diagnostic event for %s and keeps fail-closed',async(source,event)=>{
+    const s=setup(source==='ip');
+    if(source==='exception')s.store.limit.mockRejectedValue(new Error('redis-password secret-token https://private.example'));
+    if(source==='timeout')s.store.limit.mockResolvedValue({success:true,reset:now+60000,reason:'timeout'});
+    if(source==='malformed')s.store.limit.mockResolvedValue({success:true,reset:NaN,reason:'secret-token'});
+    await expect(s.guard.check(request({authorization:'Bearer secret-token',cookie:'secret-cookie','x-forwarded-for':'203.0.113.90'}),'mcp')).rejects.toMatchObject({statusCode:503});
+    expect(s.report.mock.calls).toEqual([[event]]);
+    const logged=JSON.stringify(s.report.mock.calls);
+    for(const sensitive of ['secret-token','secret-cookie','redis-password','private.example','203.0.113.90','192.0.2.10'])expect(logged).not.toContain(sensitive);
+    expect(s.retention.purgeExpired).not.toHaveBeenCalled();
+  });
+
   it('checks a shared OAuth issuance budget before per-IP budget',async()=>{const s=setup();await s.guard.check(request(),'oauth');expect(s.store.limit).toHaveBeenNthCalledWith(1,'global','global');expect(s.store.limit).toHaveBeenNthCalledWith(2,'oauth-global','global');expect(s.store.limit).toHaveBeenNthCalledWith(3,'oauth-write',expect.any(String));});
 
   it('checks global and hashed socket-IP budget without reading credentials',async()=>{const s=setup();await s.guard.check(request({authorization:'Bearer secret',cookie:'secret','x-forwarded-for':'203.0.113.5'}),'mcp');expect(s.store.limit).toHaveBeenNthCalledWith(1,'global','global');expect(s.store.limit).toHaveBeenNthCalledWith(2,'mcp',expect.stringMatching(/^[a-f0-9]{64}$/));expect(JSON.stringify(s.store.limit.mock.calls)).not.toContain('secret');expect(JSON.stringify(s.store.limit.mock.calls)).not.toContain('192.0.2.10');});
