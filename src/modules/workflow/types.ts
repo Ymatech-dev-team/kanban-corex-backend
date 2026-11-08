@@ -33,6 +33,8 @@ export interface WorkflowReview {
   decision: "pending" | "changes_requested" | "approved" | "superseded";
   decidedBy?: string;
   decidedAt?: string;
+  decidedChannel?: WorkflowChannel;
+  decidedAgent?: string;
   reason?: string;
 }
 
@@ -95,6 +97,7 @@ export type WorkflowCommand =
   | { type: "change_delivery"; reason: string; context?: string; criteria?: string[] }
   | { type: "start_execution"; executionId: string; agent: string; sessionReference?: string }
   | { type: "report_progress"; executionId: string; status: WorkflowExecution["status"]; summary: ProgressSummary }
+  | { type: "record_evidence"; summary: string; evidence: string[] }
   | { type: "submit_review"; summary: string; evidence: string[]; checks: ReviewCheck[]; reviewerId?: string }
   | { type: "record_finding"; id: string; description: string; severity: WorkflowFinding["severity"]; criterion: string; responsibleId: string; blocking: boolean }
   | { type: "report_fix"; findingId: string; evidence: string[] }

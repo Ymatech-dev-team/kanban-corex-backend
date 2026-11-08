@@ -4,7 +4,7 @@ import { Authorizer, resolveEffectivePermissions } from "../authz/authorizer.js"
 import type { SessionContext } from "../authz/types.js";
 import type { McpAuthorizationDeps, McpAuthorizedContext, McpTokenClaims } from "./types.js";
 
-type Scope = "projects:read" | "tasks:read" | "tasks:create" | "tasks:update";
+type Scope = "projects:read" | "tasks:read" | "tasks:create" | "tasks:update" | "tasks:approve";
 interface ToolPolicy { scope?: Scope; permission?: Permission; project: boolean }
 
 /** Server-owned allowlist. Headers/tool arguments cannot select scopes or permissions. */
@@ -16,8 +16,9 @@ const TOOL_POLICIES = new Map<string, ToolPolicy>([
   ["get_task", { scope: "tasks:read", project: true }],
   ["get_task_timeline", { scope: "tasks:read", project: true }],
   ["list_pending_actions", { scope: "tasks:read", project: false }],
-  ...["start_execution", "report_progress", "request_user_action", "submit_for_review"].map((name): [string, ToolPolicy] => [name, { scope: "tasks:update", permission: PERMISSIONS.tarefas_editar, project: true }]),
-  ...["record_review_findings", "record_technical_review"].map((name): [string, ToolPolicy] => [name, { scope: "tasks:update", permission: PERMISSIONS.tarefas_revisar, project: true }]),
+  ...["start_execution", "report_progress", "request_user_action", "submit_for_review", "record_delivery_evidence"].map((name): [string, ToolPolicy] => [name, { scope: "tasks:update", permission: PERMISSIONS.tarefas_editar, project: true }]),
+  ...["record_review_findings", "record_technical_review", "request_changes"].map((name): [string, ToolPolicy] => [name, { scope: "tasks:update", permission: PERMISSIONS.tarefas_revisar, project: true }]),
+  ["approve_review", { scope: "tasks:approve", permission: PERMISSIONS.tarefas_aprovar, project: true }],
   ["create_task", { scope: "tasks:create", permission: PERMISSIONS.tarefas_criar, project: true }],
   ["update_task", { scope: "tasks:update", permission: PERMISSIONS.tarefas_editar, project: true }],
   ["report_finding_fix", { scope: "tasks:update", permission: PERMISSIONS.tarefas_editar, project: true }],
@@ -28,6 +29,7 @@ const SCOPE_PERMISSIONS: Record<Scope, readonly Permission[]> = {
   "projects:read": [],
   "tasks:read": [PERMISSIONS.tarefas_ver_globais],
   "tasks:create": [PERMISSIONS.tarefas_criar],
+  "tasks:approve": [PERMISSIONS.tarefas_aprovar],
   "tasks:update": [PERMISSIONS.tarefas_editar, PERMISSIONS.tarefas_mover, PERMISSIONS.tarefas_revisar],
 };
 const SCOPES = new Set<string>(Object.keys(SCOPE_PERMISSIONS));
@@ -84,7 +86,12 @@ export class McpAuthorization {
     if (user.mustChangePassword) throw new AppError("TROCA_SENHA_OBRIGATORIA", "Troque a senha no painel para continuar");
 
     const scopes = new Set(claims.scopes.filter((scope) => SCOPES.has(scope) && grant.scopes.includes(scope)));
-    if (policy.scope && !scopes.has(policy.scope)) throw new AppError("SEM_PERMISSAO", "A conexão não autoriza esta ferramenta");
+    if (policy.scope && !scopes.has(policy.scope)) {
+      const message = policy.scope === "tasks:approve"
+        ? "Reconecte o aplicativo e autorize a conclusão de tarefas (tasks:approve). Esta conexão ainda não possui essa permissão."
+        : "A conexão não autoriza esta ferramenta";
+      throw new AppError("SEM_PERMISSAO", message);
+    }
 
     const currentPermissions = resolveEffectivePermissions(user.rolePermissions, user.extraPermissions);
     const permissions = new Set<Permission>();

@@ -85,9 +85,9 @@ describe("persisted pre-fix review snapshots", () => {
     await expect(s.store.execute(actor, "task", { operationId: "approve", expectedVersion: 4, command: { type: "approve_review", cycle: 1 } })).rejects.toThrow(/verificações/i);
     expect(s.write).not.toHaveBeenCalled();
   });
-  it("does not allow MCP human acceptance after repairing attribution", async () => {
+  it("does not allow MCP acceptance without a linked execution after repairing attribution", async () => {
     const s = persisted();
-    await expect(s.store.execute({ ...actor, channel: "MCP", connectionId: "agent" }, "task", { operationId: "approve", expectedVersion: 4, command: { type: "approve_review", cycle: 1 } })).rejects.toThrow(/humano/i);
+    await expect(s.store.execute({ ...actor, channel: "MCP", connectionId: "agent" }, "task", { operationId: "approve", expectedVersion: 4, command: { type: "approve_review", cycle: 1 } })).rejects.toThrow(/execução/i);
     expect(s.write).not.toHaveBeenCalled();
   });
 });

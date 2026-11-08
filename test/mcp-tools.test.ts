@@ -16,6 +16,32 @@ function setup(enabled=true){
  return {authorization,tasks,engagements,workflow,tools,call,ctx};
 }
 describe('Corex MCP authorized tool adapters',()=>{
+ it('does not write when approval consent is missing and preserves reconnection guidance',async()=>{
+  const s=setup();
+  s.authorization.authorize.mockResolvedValueOnce(s.ctx).mockRejectedValueOnce(new Error('Reconecte o aplicativo e autorize a conclusão de tarefas (tasks:approve).'));
+  await expect(s.call('approve_review',{taskId:'task',operationId:'op',expectedVersion:2,cycle:1})).rejects.toThrow(/Reconecte.*tasks:approve/);
+  expect(s.workflow.execute).not.toHaveBeenCalled();
+ });
+
+ it('routes autonomous approval with only delegated approval capability', async()=>{
+  const s=setup(); s.ctx.session.permissions.add(PERMISSIONS.tarefas_aprovar);
+  await s.call('approve_review',{taskId:'task',operationId:'approve',expectedVersion:2,cycle:1});
+  expect(s.authorization.authorize).toHaveBeenLastCalledWith('opaque','approve_review','canonical-project');
+  expect(s.workflow.execute).toHaveBeenCalledWith(expect.objectContaining({channel:'MCP',canApprove:true,canReopen:false}),'task',expect.objectContaining({command:{type:'approve_review',cycle:1}}));
+ });
+ it.each([
+  ['request_changes',{cycle:1,reason:'Typecheck failed'},{type:'request_changes',cycle:1,reason:'Typecheck failed'}],
+  ['record_delivery_evidence',{summary:'Deploy verified',evidence:['deployment URL']},{type:'record_evidence',summary:'Deploy verified',evidence:['deployment URL']}],
+ ])('routes %s to the same versioned workflow',async(name,fields,command)=>{
+  const s=setup(); await s.call(name,{taskId:'task',operationId:'op',expectedVersion:2,...fields});
+  expect(s.workflow.execute).toHaveBeenCalledWith(expect.objectContaining({channel:'MCP'}),'task',{operationId:'op',expectedVersion:2,command});
+ });
+ it('does not let callers inject approval capabilities or omit final evidence',async()=>{
+  const s=setup(); await expect(s.call('approve_review',{taskId:'task',operationId:'op',expectedVersion:2,cycle:1,canApprove:true})).rejects.toThrow();
+  await expect(s.call('record_delivery_evidence',{taskId:'task',operationId:'op',expectedVersion:2,summary:'done',evidence:[]})).rejects.toThrow();
+  expect(s.workflow.execute).not.toHaveBeenCalled();
+ });
+
  it.each(['IN_REVIEW', 'CHANGES_REQUESTED'])('returns authoritative %s status in detail and search without changing the stored legacy status', async (stage) => {
    const s = setup();
    s.workflow.load.mockResolvedValue({taskId:'task',version:6,stage});
@@ -55,7 +81,7 @@ describe('Corex MCP authorized tool adapters',()=>{
  });
  it('returns the same authoritative status after a successful workflow mutation', async () => {
    const s=setup(); s.workflow.execute.mockResolvedValue({taskId:'task',version:3,stage:'IN_REVIEW'});
-   expect(await s.call('submit_for_review',{taskId:'task',operationId:'op',expectedVersion:2,summary:'Done',evidence:['proof'],reviewerId:'user',checks:[]})).toMatchObject({status:'IN_REVIEW',state:{stage:'IN_REVIEW'},nextAllowedStep:'HUMAN_REVIEW_IN_PANEL'});
+   expect(await s.call('submit_for_review',{taskId:'task',operationId:'op',expectedVersion:2,summary:'Done',evidence:['proof'],reviewerId:'user',checks:[]})).toMatchObject({status:'IN_REVIEW',state:{stage:'IN_REVIEW'},nextAllowedStep:'REVIEW_AND_RESOLVE_CHECKS'});
  });
  it.each([
    ['list_projects', {}], ['search_tasks', {}], ['get_task_timeline', { taskId: 'task' }], ['list_pending_actions', {}],
@@ -77,7 +103,7 @@ describe('Corex MCP authorized tool adapters',()=>{
    if (name === 'list_pending_actions') expect(s.workflow.listActions).toHaveBeenCalledWith('org','user',undefined,51);
  });
 
- it('all actual tool schemas register through real SDK JSON-schema bridge',async()=>{const s=setup();const issuer='https://api.corex.test/oauth',resource='https://api.corex.test/mcp';const verifier={verifyAccessToken:vi.fn().mockResolvedValue({issuer,audience:resource,expiresAt:Math.floor(Date.now()/1000)+600,scopes:['tasks:read'],grantId:'grant',clientId:'claude',userId:'user',orgId:'org',tokenVersion:1})};const handler=createMcpTransport({issuer,resource,authorization:s.authorization,verifier,tools:s.tools});const r=await handler.fetch(new Request(resource,{method:'POST',headers:{authorization:'Bearer opaque','content-type':'application/json',accept:'application/json, text/event-stream','mcp-protocol-version':'2025-11-25'},body:JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/list'})}));expect(r.status).toBe(200);const output=await r.text();expect(output).toContain('create_task');expect(output).toContain('externalReference');expect(output).toContain('record_review_findings');expect(output).not.toContain('approve_review');});
+ it('all actual tool schemas register through real SDK JSON-schema bridge',async()=>{const s=setup();const issuer='https://api.corex.test/oauth',resource='https://api.corex.test/mcp';const verifier={verifyAccessToken:vi.fn().mockResolvedValue({issuer,audience:resource,expiresAt:Math.floor(Date.now()/1000)+600,scopes:['tasks:read'],grantId:'grant',clientId:'claude',userId:'user',orgId:'org',tokenVersion:1})};const handler=createMcpTransport({issuer,resource,authorization:s.authorization,verifier,tools:s.tools});const r=await handler.fetch(new Request(resource,{method:'POST',headers:{authorization:'Bearer opaque','content-type':'application/json',accept:'application/json, text/event-stream','mcp-protocol-version':'2025-11-25'},body:JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/list'})}));expect(r.status).toBe(200);const output=await r.text();expect(output).toContain('create_task');expect(output).toContain('externalReference');expect(output).toContain('record_review_findings');expect(output).toContain('approve_review');});
 
  it('lists projects within accessible clients using explicit external vocabulary',async()=>{const s=setup();expect(await s.call('list_projects',{})).toMatchObject({clients:[{clientId:'client',projects:[{projectId:'engagement',clientId:'client'}]}]});expect(s.authorization.authorize).toHaveBeenLastCalledWith('opaque','list_client_projects','client');expect(s.engagements.list).toHaveBeenCalledWith(s.ctx.session,'client');});
  it('maps client/project task filters to canonical service columns',async()=>{const s=setup();await s.call('search_tasks',{clientId:'client',projectId:'engagement'});expect(s.tasks.listAll).toHaveBeenCalledWith(s.ctx.session,expect.objectContaining({projectId:'client',engagementId:'engagement'}));});
@@ -87,7 +113,7 @@ describe('Corex MCP authorized tool adapters',()=>{
  it('never uses model actor/org/project as authorization context',async()=>{const s=setup();await expect(s.call('get_task',{taskId:'task',projectId:'fake',actorId:'admin',orgId:'other'})).rejects.toThrow();expect(s.tasks.getOrThrow).not.toHaveBeenCalled();});
  it('scope-denied task returns no record',async()=>{const s=setup();s.authorization.authorize.mockRejectedValueOnce(new Error('revoked'));await expect(s.call('get_task',{taskId:'task'})).rejects.toThrow('revoked');expect(s.tasks.getOrThrow).not.toHaveBeenCalled();});
  it('writes to same task with trusted MCP actor and human privileges false',async()=>{const s=setup();await s.call('transition_task',{taskId:'task',operationId:'op',expectedVersion:2,to:'IN_REVIEW'});expect(s.workflow.execute).toHaveBeenCalledWith(expect.objectContaining({userId:'user',orgId:'org',channel:'MCP',connectionId:'trusted-grant',canApprove:false,canReopen:false}),'task',{operationId:'op',expectedVersion:2,command:{type:'transition',to:'IN_REVIEW'}});});
- it('has no human approval/waiver/delete tool',()=>{const s=setup();for(const name of ['approve_review','waive_finding','delete_task','resolve_user_action'])expect(s.tools.find(t=>t.name===name)).toBeUndefined();});
+ it('has no waiver/delete or impersonated response tool',()=>{const s=setup();for(const name of ['waive_finding','delete_task','resolve_user_action'])expect(s.tools.find(t=>t.name===name)).toBeUndefined();});
  it('feature-disabled tools do not advertise workflow mutations',()=>{const s=setup(false);expect(s.tools.some(t=>!t.readOnly)).toBe(false);});
  it('creates through atomic managed facade with verified project',async()=>{const s=setup();await s.call('create_task',{operationId:'op',externalReference:'plan/item',clientId:'project',projectId:'engagement',title:'Implement',responsibleId:'user',criteria:['works'],context:'scope'});expect(s.authorization.authorize).toHaveBeenLastCalledWith('opaque','create_task','project');expect(s.workflow.createManagedTask).toHaveBeenCalledWith(expect.objectContaining({channel:'MCP',connectionId:'trusted-grant'}),expect.objectContaining({operationId:'op',externalReference:'plan/item',projectId:'project',engagementId:'engagement',title:'Implement'}));});
 });

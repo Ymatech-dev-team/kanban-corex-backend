@@ -25,7 +25,7 @@ const operation = { taskId: id, operationId: z.string().min(1).max(256), expecte
 const summary = z.object({ objective: text, completed: z.array(text.max(2000)).max(50), remaining: z.array(text.max(2000)).max(50), nextStep: text, blockers: z.array(text.max(2000)).max(50), references: z.array(text.max(2000)).max(50) }).strict();
 function confirmed(state: { taskId: string; version: number; stage: string }) {
   return { state, status: state.stage, taskId: state.taskId, url: `/tarefas/${encodeURIComponent(state.taskId)}`, version: state.version,
-    nextAllowedStep: state.stage === "IN_REVIEW" ? "HUMAN_REVIEW_IN_PANEL" : state.stage === "DONE" ? "VIEW_COMPLETED_TASK" : "CONSULT_CURRENT_TASK_BEFORE_MUTATION" };
+    nextAllowedStep: state.stage === "IN_REVIEW" ? "REVIEW_AND_RESOLVE_CHECKS" : state.stage === "DONE" ? "VIEW_COMPLETED_TASK" : "CONSULT_CURRENT_TASK_BEFORE_MUTATION" };
 }
 function taskDto<T extends { id: string; status: string; projectId: string; engagementId?: string; estimatedMinutes: number | null }>(task: T, workflow: { stage: string } | null = null) {
   const { projectId: clientId, engagementId: projectId, ...rest } = redactCost(task, false);
@@ -35,7 +35,7 @@ function taskDto<T extends { id: string; status: string; projectId: string; enga
 function actor(ctx: McpAuthorizedContext): WorkflowActor {
   return { userId: ctx.session.userId, orgId: ctx.session.orgId, channel: "MCP", connectionId: ctx.connectionId,
     canWrite: ctx.session.permissions.has(PERMISSIONS.tarefas_editar), canReview: ctx.session.permissions.has(PERMISSIONS.tarefas_revisar),
-    canCreate: ctx.session.permissions.has(PERMISSIONS.tarefas_criar), canApprove: false, canReopen: false };
+    canCreate: ctx.session.permissions.has(PERMISSIONS.tarefas_criar), canApprove: ctx.session.permissions.has(PERMISSIONS.tarefas_aprovar), canReopen: false };
 }
 export function createCorexMcpTools(options: CorexMcpToolsOptions): McpToolDefinition[] {
   const definitions: McpToolDefinition[] = [];
@@ -104,10 +104,13 @@ export function createCorexMcpTools(options: CorexMcpToolsOptions): McpToolDefin
   });
   const commands: Array<{name:string; type:string; fields:ZodRawShape; description:string}> = [
     { name: "update_task", type: "change_delivery", fields: { reason: text, context: text.optional(), criteria: z.array(text.max(2000)).min(1).max(100).optional() }, description: "Atualiza escopo/critérios da entrega com CAS; invalida revisão anterior. Não cria card." },
-    { name: "transition_task", type: "transition", fields: { to: z.enum(["BACKLOG", "PLANNING", "READY", "DOING", "IN_REVIEW", "CHANGES_REQUESTED"]), reason: text.optional() }, description: "Avança a mesma tarefa segundo as regras. DONE exige aceite humano no painel." },
-    { name: "start_execution", type: "start_execution", fields: { executionId: id, agent: id, sessionReference: z.string().min(1).max(256).optional() }, description: "Vincula execução à tarefa; não inicia processos nem acessa arquivos." },
-    { name: "report_progress", type: "report_progress", fields: { executionId: id, status: z.enum(["RUNNING", "WAITING", "PAUSED", "FINISHED"]), summary }, description: "Registra resumo, próximo passo e bloqueios no mesmo card." },
-    { name: "submit_for_review", type: "submit_review", fields: { summary: text, evidence, reviewerId: id, checks: z.array(z.object({ name:id, status:z.enum(["passed","failed","pending"]), required:z.boolean() }).strict()).max(100) }, description: "Entrega evidências e checks para revisão humana na mesma tarefa." },
+    { name: "transition_task", type: "transition", fields: { to: z.enum(["BACKLOG", "PLANNING", "READY", "DOING", "IN_REVIEW", "CHANGES_REQUESTED"]), reason: text.optional() }, description: "Avança a mesma tarefa segundo as regras. DONE exige approve_review após checks e achados resolvidos; não use transição genérica para concluir." },
+    { name: "start_execution", type: "start_execution", fields: { executionId: id, agent: id, sessionReference: z.string().min(1).max(256).optional() }, description: "Vincula execução à mesma tarefa; não inicia processos nem acessa arquivos. Após request_changes, se a execução anterior terminou, inicie outra com novo executionId no mesmo card para corrigir e verificar novamente." },
+    { name: "report_progress", type: "report_progress", fields: { executionId: id, status: z.enum(["RUNNING", "WAITING", "PAUSED", "FINISHED"]), summary }, description: "Registra resumo, próximo passo e bloqueios no mesmo card. Não reabre execução FINISHED; para anexar resultados finais de smoke, deploy ou merge use record_delivery_evidence." },
+    { name: "submit_for_review", type: "submit_review", fields: { summary: text, evidence, reviewerId: id, checks: z.array(z.object({ name:id, status:z.enum(["passed","failed","pending"]), required:z.boolean() }).strict()).max(100) }, description: "Envia evidências e resultados reais dos checks para revisão no mesmo card. Não executa verificações. Se falharem, use request_changes, corrija e rode novamente antes de reenviar. Não marque passed sem execução e evidência." },
+    { name: "request_changes", type: "request_changes", fields: { cycle: z.number().int().positive(), reason: text }, description: "Solicita ajustes na revisão atual da mesma tarefa. Corrija os erros, rode os checks novamente e envie outra revisão; preserve os achados e seus IDs. Se a execução terminou, use start_execution com novo executionId." },
+    { name: "approve_review", type: "approve_review", fields: { cycle: z.number().int().positive() }, description: "Aprova a revisão atual e conclui uma entrega executada por agente. Exige consentimento tasks:approve, permissão atual de aprovação, quatro checks aprovados e nenhum achado bloqueante pendente. Falha não deve ser contornada: solicite ajustes, corrija, verifique e reenvie na mesma tarefa. Não representa aceite humano." },
+    { name: "record_delivery_evidence", type: "record_evidence", fields: { summary: text, evidence }, description: "Anexa resumo e evidências de smoke, deploy ou merge ao histórico, inclusive após FINISHED ou DONE. Não altera checks, aprovação ou escopo e não reabre a tarefa. Registre somente ações realmente verificadas; esta ferramenta não autoriza executar deploy ou merge." },
     { name: "record_review_findings", type: "record_finding", fields: { id, description: text, severity: z.enum(["low","medium","high","critical"]), criterion: text.max(2000), responsibleId: id, blocking: z.boolean() }, description: "Adiciona um achado estável à revisão existente. Nunca cria outro card." },
     { name: "report_finding_fix", type: "report_fix", fields: { findingId: id, evidence }, description: "Informa correção e evidência para achado existente, sem autoaceite." },
     { name: "record_technical_review", type: "validate_finding", fields: { findingId: id, cycle: z.number().int().positive() }, description: "Valida tecnicamente um achado no ciclo atual se a conta puder revisar. Não aprova a entrega." },

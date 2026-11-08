@@ -28,6 +28,36 @@ beforeEach(() => {
 });
 
 describe("MCP authorization boundary", () => {
+  it("requires explicit approval consent in both token and immutable grant", async () => {
+    users.findById.mockResolvedValue({ ...user(), rolePermissions: [PERMISSIONS.tarefas_aprovar] });
+    await expect(boundary().authorize("token", "approve_review", "project")).rejects.toMatchObject({code:"SEM_PERMISSAO",message:expect.stringMatching(/reconecte.*tasks:approve/i)});
+    verifier.verifyAccessToken.mockResolvedValue({ ...claims(), scopes:[...claims().scopes,"tasks:approve"] });
+    await expect(boundary().authorize("token", "approve_review", "project")).rejects.toMatchObject({code:"SEM_PERMISSAO",message:expect.stringMatching(/reconecte.*tasks:approve/i)});
+    grants.findById.mockResolvedValue({ ...grant(), scopes:[...grant().scopes,"tasks:approve"] });
+    expect((await boundary().authorize("token", "approve_review", "project")).session.permissions.has(PERMISSIONS.tarefas_aprovar)).toBe(true);
+    verifier.verifyAccessToken.mockResolvedValue(claims());
+    await expect(boundary().authorize("token", "approve_review", "project")).rejects.toMatchObject({code:"SEM_PERMISSAO",message:expect.stringMatching(/reconecte.*tasks:approve/i)});
+  });
+  it("rechecks approval account permission, tenant and membership", async () => {
+    verifier.verifyAccessToken.mockResolvedValue({...claims(),scopes:["tasks:approve"]});
+    grants.findById.mockResolvedValue({...grant(),scopes:["tasks:approve"]});
+    await expect(boundary().authorize("token","approve_review","project")).rejects.toMatchObject({code:"SEM_PERMISSAO"});
+    users.findById.mockResolvedValue({...user(),rolePermissions:[PERMISSIONS.tarefas_aprovar]});
+    projects.findById.mockResolvedValue({id:"project",orgId:"other",deletedAt:null});
+    await expect(boundary().authorize("token","approve_review","project")).rejects.toMatchObject({code:"NAO_ENCONTRADO"});
+    projects.findById.mockResolvedValue({id:"project",orgId:"org",deletedAt:null});
+    access.isMember.mockResolvedValue(false);
+    await expect(boundary().authorize("token","approve_review","project")).rejects.toMatchObject({code:"NAO_ENCONTRADO"});
+  });
+  it("delegates correction requests and final evidence only with current permissions", async () => {
+    users.findById.mockResolvedValue({...user(),rolePermissions:[PERMISSIONS.tarefas_revisar,PERMISSIONS.tarefas_editar]});
+    await expect(boundary().authorize("token","request_changes","project")).resolves.toMatchObject({channel:"MCP"});
+    await expect(boundary().authorize("token","record_delivery_evidence","project")).resolves.toMatchObject({channel:"MCP"});
+    users.findById.mockResolvedValue({...user(),rolePermissions:[]});
+    await expect(boundary().authorize("token","request_changes","project")).rejects.toMatchObject({code:"SEM_PERMISSAO"});
+    await expect(boundary().authorize("token","record_delivery_evidence","project")).rejects.toMatchObject({code:"SEM_PERMISSAO"});
+  });
+
   it("delegates technical review only from current role and never human approval", async () => {
     users.findById.mockResolvedValue({ ...user(), rolePermissions: [PERMISSIONS.tarefas_revisar, PERMISSIONS.tarefas_aprovar] });
     const ctx = await boundary().authorize("token", "record_review_findings", "project");
@@ -121,7 +151,7 @@ describe("MCP authorization boundary", () => {
     await expect(boundary().authorize("token", "update_task")).rejects.toMatchObject({ code: "VALIDACAO" });
   });
 
-  it.each(["approve_review", "delete_task", "waive_finding", "unknown_tool"])("rejects unsupported or privileged tool %s", async (tool) => {
+  it.each(["delete_task", "waive_finding", "unknown_tool"])("rejects unsupported or privileged tool %s", async (tool) => {
     await expect(boundary().authorize("token", tool, "project")).rejects.toMatchObject({ code: "SEM_PERMISSAO" });
   });
 

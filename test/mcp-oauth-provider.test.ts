@@ -34,8 +34,8 @@ async function setup(dropSocketAfterBody = false) {
     return response;
   }
   const verifier='a'.repeat(64);const challenge=createHash('sha256').update(verifier).digest('base64url');
-  async function authorize() {
-    const q=new URLSearchParams({client_id:'claude',redirect_uri:'https://client.example.test/callback',response_type:'code',scope:'tasks:read tasks:update offline_access',resource,code_challenge:challenge,code_challenge_method:'S256',state:'test-state'});
+  async function authorize(scope = 'tasks:read tasks:update offline_access') {
+    const q=new URLSearchParams({client_id:'claude',redirect_uri:'https://client.example.test/callback',response_type:'code',scope,resource,code_challenge:challenge,code_challenge_method:'S256',state:'test-state'});
     let response=await request(`${issuer}/auth?${q}`);
     expect(response.status).toBe(303);
     const interaction=response.headers.get('location')!;
@@ -43,8 +43,8 @@ async function setup(dropSocketAfterBody = false) {
     const html=await response.text();const csrf=html.match(/name="csrf" value="([^"]+)"/)?.[1];expect(csrf).toBeTruthy();
     return {interaction,csrf:csrf!};
   }
-  async function approve() {
-    const {interaction,csrf}=await authorize();
+  async function approve(scope?: string) {
+    const {interaction,csrf}=await authorize(scope);
     let response=await request(interaction,{method:'POST',headers:{origin:base,'content-type':'application/x-www-form-urlencoded'},body:new URLSearchParams({csrf,email:'person@example.test',password:'test-password',decision:'allow'})});
     expect(response.status).toBe(303);
     for(let i=0;i<5;i++){const location=response.headers.get('location')!;if(location.startsWith('https://client.example.test'))return new URL(location).searchParams.get('code')!;response=await request(location);expect(response.status).toBe(303);}
@@ -86,6 +86,18 @@ describe('real maintained OAuth provider',()=>{
   it('denial issues no connection and does not authenticate',async()=>{const s=await setup();const {interaction,csrf}=await s.authorize();const r=await s.request(interaction,{method:'POST',headers:{origin:s.base,'content-type':'application/x-www-form-urlencoded'},body:new URLSearchParams({csrf,decision:'deny'})});expect(r.status).toBe(303);expect(await s.connections.list('user','org')).toEqual([]);expect(s.authenticate).not.toHaveBeenCalled();});
 
   it('publishes discovery and requires PKCE S256',async()=>{const s=await setup();const r=await s.request(`${s.issuer}/.well-known/openid-configuration`);expect(r.status).toBe(200);const body=await r.json();expect(body.issuer).toBe(s.issuer);expect(body.code_challenge_methods_supported).toEqual(['S256']);});
+  it('approval scope requires explicit consent and remains absent from legacy refresh',async()=>{
+    const s=await setup();
+    const oldToken=await (await s.exchange(await s.approve())).json();
+    expect((await s.service.verifyAccessToken(oldToken.access_token))?.scopes).not.toContain('tasks:approve');
+    const refreshed=await s.request(`${s.issuer}/token`,{method:'POST',headers:{'content-type':'application/x-www-form-urlencoded'},body:new URLSearchParams({client_id:'claude',grant_type:'refresh_token',refresh_token:oldToken.refresh_token,resource:s.resource})});
+    expect(refreshed.status).toBe(200);
+    expect((await s.service.verifyAccessToken((await refreshed.json()).access_token))?.scopes).not.toContain('tasks:approve');
+    const newToken=await (await s.exchange(await s.approve('tasks:read tasks:update tasks:approve offline_access'))).json();
+    const claims=await s.service.verifyAccessToken(newToken.access_token);
+    expect(claims?.scopes).toContain('tasks:approve');
+    expect((await s.connections.findById(claims!.grantId))?.scopes).toContain('tasks:approve');
+  });
   it('consents same panel account, exchanges code and validates dedicated resource token',async()=>{const s=await setup();const code=await s.approve();const r=await s.exchange(code);expect(r.status).toBe(200);const token=await r.json();expect(token.refresh_token).toBeTruthy();expect(await s.service.verifyAccessToken(token.access_token)).toMatchObject({userId:'user',orgId:'org',tokenVersion:2,audience:s.resource,issuer:s.issuer});expect(s.authenticate).toHaveBeenCalledWith('person@example.test','test-password');});
   it('rejects incorrect PKCE verifier',async()=>{const s=await setup();const r=await s.exchange(await s.approve(),'b'.repeat(64));expect(r.status).toBe(400);});
   it('rejects authorization-code replay',async()=>{const s=await setup();const code=await s.approve();expect((await s.exchange(code)).status).toBe(200);expect((await s.exchange(code)).status).toBe(400);});

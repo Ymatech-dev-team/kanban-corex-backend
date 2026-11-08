@@ -17,7 +17,7 @@ export interface McpOAuthService extends McpTokenVerifier {
   provider: Provider;
   handle(req: IncomingMessage, res: ServerResponse): Promise<void>;
 }
-export const MCP_SCOPES = ["projects:read", "tasks:read", "tasks:create", "tasks:update"] as const;
+export const MCP_SCOPES = ["projects:read", "tasks:read", "tasks:create", "tasks:update", "tasks:approve"] as const;
 const lifetime = 30 * 24 * 60 * 60;
 const clock = () => Math.floor(Date.now() / 1000);
 

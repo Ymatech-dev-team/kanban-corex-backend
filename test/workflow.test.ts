@@ -9,7 +9,7 @@ const run = (state: WorkflowState, command: WorkflowCommand, actor = executor) =
   applyWorkflowCommand(state, actor, command, state.version, at).state;
 const initial = () => createWorkflow({ taskId: "task", orgId: "org", responsibleId: "dev", criteria: ["Behavior verified"], context: "Plan reference" });
 const doing = () => run(run(initial(), { type: "transition", to: "READY" }), { type: "transition", to: "DOING" });
-const submit: WorkflowCommand = { type: "submit_review", summary: "Implemented", evidence: ["PR #12"], checks: [{ name: "test", status: "passed", required: true }] };
+const submit: WorkflowCommand = { type: "submit_review", summary: "Implemented", evidence: ["PR #12"], checks: ["typecheck", "lint", "test", "build"].map(name => ({ name, status: "passed", required: true })) };
 const review = () => run(doing(), submit);
 const finding: WorkflowCommand = { type: "record_finding", id: "finding-1", description: "Missing empty state", severity: "high", criterion: "Behavior verified", responsibleId: "dev", blocking: true };
 
@@ -33,17 +33,17 @@ describe("workflow domain authorization and review", () => {
     expect(() => run(doing(), { type: "transition", to: "IN_REVIEW" })).toThrow(/transição/i);
   });
 
-  it("MCP cannot give human acceptance even with an approving account", () => {
-    expect(() => run(review(), { type: "approve_review", cycle: 1 }, { ...reviewer, channel: "MCP" })).toThrow(/humano/i);
+  it("MCP cannot approve without a linked agent execution", () => {
+    expect(() => run(review(), { type: "approve_review", cycle: 1 }, { ...reviewer, channel: "MCP" })).toThrow(/execução/i);
   });
 
-  it("allows a human sponsor to accept an agent delivery but never the MCP channel", () => {
+  it("allows a human sponsor to accept a delivery without a linked agent execution", () => {
     const agent = { ...reviewer, channel: "MCP" as const };
     let state = run(initial(), { type: "transition", to: "READY" }, agent);
     state = run(state, { type: "transition", to: "DOING" }, agent);
     state = run(state, submit, agent);
     expect(state.executorIds).toEqual([]);
-    expect(() => run(state, { type: "approve_review", cycle: 1 }, agent)).toThrow(/humano/i);
+    expect(() => run(state, { type: "approve_review", cycle: 1 }, agent)).toThrow(/execução/i);
     expect(run(state, { type: "approve_review", cycle: 1 }, reviewer).stage).toBe("DONE");
   });
 

@@ -101,6 +101,14 @@ export function applyWorkflowCommand(
       markExecutor(state, actor);
       break;
     }
+    case "record_evidence": {
+      requirePermission(actor.canWrite);
+      requireText(command.summary, "Resumo da evidência");
+      requireEvidence(command.evidence);
+      // Append-only event: late deployment/merge evidence must not reopen a delivery
+      // or rewrite the previously reviewed summary, checks, findings or execution.
+      break;
+    }
     case "report_progress": {
       requirePermission(actor.canWrite);
       if (!state.execution || state.execution.id !== command.executionId || state.execution.ownerId !== actor.userId ||
@@ -234,19 +242,31 @@ export function applyWorkflowCommand(
     }
     case "approve_review": {
       requirePermission(actor.canApprove);
-      if (actor.channel !== "WEB") throw new AppError("SEM_PERMISSAO", "Aceite humano exige ação no painel");
+      if (actor.channel !== "WEB" && actor.channel !== "MCP") throw new AppError("SEM_PERMISSAO", "Aprovação exige painel ou conexão MCP autorizada");
+      if (actor.channel === "MCP" && (!actor.connectionId || state.execution?.channel !== "MCP")) {
+        throw new AppError("SEM_PERMISSAO", "Aprovação MCP exige execução MCP vinculada e conexão autenticada");
+      }
       const review = currentReview(state, command.cycle);
       if (state.executorIds.includes(actor.userId)) throw new AppError("SEM_PERMISSAO", "O executor não pode aprovar a própria entrega");
       if (state.findings.some((finding) => finding.blocking &&
         (!(finding.state === "validated" || finding.state === "waived") || finding.resolvedDeliveryRevision !== state.deliveryRevision))) {
         throw new AppError("VALIDACAO", "Existem achados impeditivos não resolvidos");
       }
-      if (review.checks.some((check) => check.required && check.status !== "passed")) {
+      const requiredChecks = ["typecheck", "lint", "test", "build"];
+      if (requiredChecks.some(name => !review.checks.some(check => check.name === name && check.required && check.status === "passed")) ||
+        new Set(review.checks.map(check => check.name)).size !== review.checks.length ||
+        review.checks.some((check) => check.required && check.status !== "passed")) {
         throw new AppError("VALIDACAO", "As verificações obrigatórias precisam passar");
       }
       review.decision = "approved";
       review.decidedBy = actor.userId;
       review.decidedAt = at;
+      review.decidedChannel = actor.channel;
+      if (actor.channel === "MCP") {
+        review.decidedAgent = state.execution?.ownerId === actor.userId && state.execution.connectionId === actor.connectionId
+          ? state.execution.agent : "Assistente conectado";
+      }
+      if (state.execution) { state.execution.status = "FINISHED"; state.execution.lastUpdatedAt = at; }
       state.stage = "DONE";
       break;
     }
