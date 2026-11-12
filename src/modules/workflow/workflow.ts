@@ -257,7 +257,10 @@ export function applyWorkflowCommand(
       review.reviewMode = "AGENT";
       break;
     }
+    case "approve_with_reservations":
     case "approve_review": {
+      const withReservations = command.type === "approve_with_reservations";
+      if (withReservations && actor.channel !== "WEB") throw new AppError("SEM_PERMISSAO", "Aprovação com ressalvas exige decisão humana pelo painel");
       requirePermission(actor.canApprove);
       if (actor.channel !== "WEB" && actor.channel !== "MCP") throw new AppError("SEM_PERMISSAO", "Aprovação exige painel ou conexão MCP autorizada");
       if (actor.channel === "MCP" && (!actor.connectionId || state.execution?.channel !== "MCP")) {
@@ -270,12 +273,23 @@ export function applyWorkflowCommand(
         (!(finding.state === "validated" || finding.state === "waived") || finding.resolvedDeliveryRevision !== state.deliveryRevision))) {
         throw new AppError("VALIDACAO", "Existem achados impeditivos não resolvidos");
       }
+      const selected = new Set(withReservations ? command.checkNames : []);
+      if (withReservations) {
+        requireText(command.reason, "Justificativa da ressalva");
+        if (command.reason.trim().length < 3) throw new AppError("VALIDACAO", "Justificativa da ressalva deve ter ao menos 3 caracteres");
+        if (!Array.isArray(command.checkNames) || !selected.size || command.checkNames.length > 100 || selected.size !== command.checkNames.length ||
+          command.checkNames.some(name => !review.checks.some(check => check.name === name && check.status === "failed"))) {
+          throw new AppError("VALIDACAO", "Selecione somente verificações reprovadas, sem duplicações");
+        }
+      }
+      const accepted = (check: { name: string; status: string }) => check.status === "passed" || (check.status === "failed" && selected.has(check.name));
       const requiredChecks = ["typecheck", "lint", "test", "build"];
-      if (requiredChecks.some(name => !review.checks.some(check => check.name === name && check.required && check.status === "passed")) ||
+      if (requiredChecks.some(name => !review.checks.some(check => check.name === name && check.required && accepted(check))) ||
         new Set(review.checks.map(check => check.name)).size !== review.checks.length ||
-        review.checks.some((check) => check.required && check.status !== "passed")) {
+        review.checks.some((check) => check.required && !accepted(check))) {
         throw new AppError("VALIDACAO", "As verificações obrigatórias precisam passar");
       }
+      if (withReservations) review.reservation = { checkNames: [...command.checkNames], reason: command.reason.trim(), approvedBy: actor.userId, approvedAt: at, cycle: review.cycle, deliveryRevision: state.deliveryRevision };
       review.decision = "approved";
       review.decidedBy = actor.userId;
       review.decidedAt = at;

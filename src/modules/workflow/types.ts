@@ -38,6 +38,8 @@ export interface WorkflowReview {
   decidedChannel?: WorkflowChannel;
   decidedAgent?: string;
   reason?: string;
+  /** Explicit human acceptance of failed checks, scoped to this immutable review. */
+  reservation?: { checkNames: string[]; reason: string; approvedBy: string; approvedAt: string; cycle: number; deliveryRevision: number };
 }
 
 export interface WorkflowFinding {
@@ -107,7 +109,8 @@ export type WorkflowCommand =
   | { type: "waive_finding"; findingId: string; cycle: number; reason: string }
   | { type: "request_changes"; cycle: number; reason: string }
   | { type: "adopt_agent_review"; cycle: number }
-  | { type: "approve_review"; cycle: number };
+  | { type: "approve_review"; cycle: number }
+  | { type: "approve_with_reservations"; cycle: number; checkNames: string[]; reason: string };
 
 export interface WorkflowEvent {
   taskId: string;

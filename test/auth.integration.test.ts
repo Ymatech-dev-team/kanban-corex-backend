@@ -122,7 +122,8 @@ describe("auth (integração)", () => {
     const r1 = await post("/auth/refresh", { refreshToken });
     expect(r1.statusCode).toBe(200);
     const reuse = await post("/auth/refresh", { refreshToken });
-    expect(reuse.statusCode).toBe(401);
+    expect(reuse.statusCode).toBe(409);
+    expect(reuse.json().error.code).toBe("REFRESH_EM_ANDAMENTO");
   });
 
   it("first-login troca a senha e limpa a flag", async () => {

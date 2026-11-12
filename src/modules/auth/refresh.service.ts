@@ -59,9 +59,9 @@ export class RefreshService {
 
     if (stored.revokedAt) {
       const age = Date.now() - stored.revokedAt.getTime();
-      if (age <= this.cfg.graceMs) {
+      if (stored.replacedById && age <= this.cfg.graceMs) {
         // Reuso dentro da janela = concorrência legítima (não é ataque). Não mata a família.
-        throw new AppError("NAO_AUTENTICADO", "Refresh concorrente, tente de novo");
+        throw new AppError("REFRESH_EM_ANDAMENTO", "Renovação de sessão em andamento. Tente novamente.");
       }
       // Reuso de token já rotacionado = REPLAY → revoga a família inteira.
       await this.repo.revokeFamily(stored.family);
@@ -70,7 +70,7 @@ export class RefreshService {
 
     const next = this.build(claims.userId, stored.family, stored.familyExpiresAt);
     const ok = await this.repo.rotate(stored.id, next.row); // CAS atômico
-    if (!ok) throw new AppError("NAO_AUTENTICADO", "Refresh concorrente, tente de novo");
+    if (!ok) throw new AppError("REFRESH_EM_ANDAMENTO", "Renovação de sessão em andamento. Tente novamente.");
     return { userId: claims.userId, refresh: next.raw };
   }
 

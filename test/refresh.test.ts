@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { TokenService } from "../src/modules/auth/token.service.js";
 import { RefreshService } from "../src/modules/auth/refresh.service.js";
 import { InMemoryRefreshRepo } from "../src/modules/auth/memory-repos.js";
@@ -19,7 +19,7 @@ function setup() {
     familyTtlSec: 3600,
     graceMs: 10_000,
   });
-  return { repo, svc };
+  return { repo, svc, tokens };
 }
 
 describe("RefreshService [SEC-004]", () => {
@@ -28,7 +28,7 @@ describe("RefreshService [SEC-004]", () => {
     const first = await svc.issueNewFamily("u1");
     const r1 = await svc.rotate(first);
     expect(r1.refresh).toBeTruthy();
-    await expect(svc.rotate(first)).rejects.toThrow(); // reuso na graça
+    await expect(svc.rotate(first)).rejects.toMatchObject({ statusCode: 409, code: "REFRESH_EM_ANDAMENTO" }); // concorrência recuperável
     const r2 = await svc.rotate(r1.refresh);
     expect(r2.refresh).toBeTruthy();
   });
@@ -41,4 +41,25 @@ describe("RefreshService [SEC-004]", () => {
     await expect(svc.rotate(first)).rejects.toThrow(); // replay detectado
     await expect(svc.rotate(r1.refresh)).rejects.toThrow(); // família morta
   });
+  it("two instances sharing the store have one winner and a recoverable loser", async () => {
+    const {svc,repo,tokens}=setup();
+    const second=new RefreshService(repo,tokens,{refreshTtlSec:3600,familyTtlSec:3600,graceMs:10000});
+    const first=await svc.issueNewFamily("u1");
+    const results=await Promise.allSettled([svc.rotate(first),second.rotate(first)]);
+    expect(results.filter(r=>r.status==="fulfilled")).toHaveLength(1);
+    const loser=results.find(r=>r.status==="rejected") as PromiseRejectedResult;
+    expect(loser.reason).toMatchObject({statusCode:409,code:"REFRESH_EM_ANDAMENTO"});
+    const winner=results.find(r=>r.status==="fulfilled") as PromiseFulfilledResult<{refresh:string}>;
+    await expect(second.rotate(winner.value.refresh)).resolves.toHaveProperty("refresh");
+  });
+  it("CAS loser is recoverable and does not revoke the winner", async()=>{
+    const {svc,repo}=setup();const first=await svc.issueNewFamily("u1");
+    vi.spyOn(repo,"rotate").mockResolvedValueOnce(false);const revoke=vi.spyOn(repo,"revokeFamily");
+    await expect(svc.rotate(first)).rejects.toMatchObject({statusCode:409});expect(revoke).not.toHaveBeenCalled();
+  });
+  it("logout is a definitive unauthorized failure even inside grace",async()=>{
+    const {svc}=setup();const first=await svc.issueNewFamily("u1");await svc.revokeFamilyOf(first);
+    await expect(svc.rotate(first)).rejects.toMatchObject({statusCode:401});
+  });
+
 });

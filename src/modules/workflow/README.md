@@ -40,3 +40,7 @@ Agents request changes on the same review when checks or findings fail, then res
 GET `/tasks/workflows/mine` pagina por `(updatedAt,taskId)` os workflows acessíveis ligados à conta (responsável, execução, atribuição ou pedido REVIEW aberto). Retorna título, cliente/projeto e snapshot validado, sem alegar atividade ao vivo.
 
 `/tasks/actions/mine` mantém pedidos explícitos e REVIEW com modo HUMAN; legado sem modo fica no acompanhamento para classificação, sem escrita durante leitura. A adoção explícita MCP gera evento e encerra a solicitação antiga, preservando o histórico. AGENT não cria pedido humano no submit. Nenhuma migration relacional necessária: reviewMode opcional no agregado preserva leitura de snapshots antigos.
+
+### Aprovação humana com ressalvas
+
+`approve_with_reservations` é exclusivo do painel WEB, requer `tarefas.aprovar` e preserva a restrição de executor humano. Recebe ciclo atual, nomes únicos de checks já executados e reprovados e justificativa com pelo menos três caracteres. Não permite dispensar checks ausentes/pendentes, achados bloqueantes não resolvidos ou verificações de outra entrega. Resultados originais permanecem `failed`; a revisão guarda `reservation` com autor/data/ciclo/revisão/justificativa e checks selecionados. O evento próprio conclui a tarefa e resolve a solicitação REVIEW na mesma transação. A ressalva não é reutilizada em novo ciclo/entrega. Não há migration: metadados ficam no agregado JSON existente.

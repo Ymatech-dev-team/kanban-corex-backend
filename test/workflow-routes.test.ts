@@ -68,3 +68,12 @@ describe("monitoring route pagination and authorization", () => {
  it("validates cursor before querying and scopes query to authenticated account", async()=>{const {app,repo}=fixture();try{expect((await app.inject({method:'GET',url:'/tasks/workflows/mine?cursor=bad'})).statusCode).toBe(400);expect(repo.listMonitoring).not.toHaveBeenCalled();const response=await app.inject({method:'GET',url:'/tasks/workflows/mine?limit=2'});expect(response.json()).toEqual({items:[],nextCursor:null});expect(repo.listMonitoring).toHaveBeenCalledWith('o','u',undefined,3);}finally{await app.close();}});
  it("never returns inaccessible rows, preserves cursor for a partially visible page", async()=>{const {app,repo}=fixture({projectAccess:false});const row={taskId:'t',title:'private',updatedAt:'2026-11-12T12:00:00.000Z',state:{}};repo.listMonitoring.mockResolvedValue([row,{...row,taskId:'older'}]);try{const response=await app.inject({method:'GET',url:'/tasks/workflows/mine?limit=1'});expect(response.statusCode).toBe(200);expect(response.json().items).toEqual([]);const cursor=JSON.parse(Buffer.from(response.json().nextCursor,'base64url').toString());expect(cursor).toEqual({updatedAt:row.updatedAt,taskId:'t'});}finally{await app.close();}});
 });
+
+ it.each([['tarefas.editar'], ['tarefas.revisar'], []])('does not allow reservation approval with %j', async (...permissions) => {
+   const {app,repo}=fixture({permissions: permissions as string[]});
+   try { const response=await app.inject({method:'POST',url:'/tasks/t/workflow/commands',payload:{operationId:'reservation',expectedVersion:1,command:{type:'approve_with_reservations',cycle:1,checkNames:['lint'],reason:'Preexisting failure'}}}); expect(response.statusCode).toBe(403);expect(repo.execute).not.toHaveBeenCalled(); }finally{await app.close();}
+ });
+ it('routes reservation approval with approval-only permission and trusted WEB identity',async()=>{
+   const {app,repo}=fixture({permissions:['tarefas.aprovar']});
+   try {const command={type:'approve_with_reservations',cycle:1,checkNames:['lint'],reason:'Preexisting failure'};const response=await app.inject({method:'POST',url:'/tasks/t/workflow/commands',payload:{operationId:'reservation',expectedVersion:1,command}});expect(response.statusCode).toBe(200);expect(repo.execute).toHaveBeenCalledWith(expect.objectContaining({channel:'WEB',canApprove:true,canWrite:false}),'t',expect.objectContaining({command}));}finally{await app.close();}
+ });

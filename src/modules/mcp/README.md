@@ -87,3 +87,5 @@ Consulte tarefa e versão; execute e verifique; envie revisão com evidências r
 Para revisão antiga sem modo, `adopt_agent_review` exige tasks:approve/permissão atual, ciclo vigente, execução MCP da mesma conta e ausência de executores humanos. Registra adoção e cancela a solicitação REVIEW antiga na mesma transação; não aprova nem modifica checks/achados. Revisão HUMAN explícita não admite adoção. Após adoção, consultar o estado e continuar corrigindo até approve_review retornar DONE.
 
 Respostas incluem `completionBlockers` e `suggestedTool`, além de versão/ciclo no estado. Essas sugestões não substituem autorização nem executam processos. Corrigir checks/achados, reexecutar e verificar de verdade; nunca transformar falha antiga/fora de escopo em passed. Não pedir aceite final para AGENT; solicitar ação humana somente por decisão ou acesso concreto fora do plano.
+
+Aprovação com ressalvas de checks reprovados é uma decisão humana exclusiva do painel (`approve_with_reservations`), não uma ferramenta MCP. O conector pode ler a decisão auditada, mas não pode fabricá-la; o fluxo autônomo continua exigindo verificações aprovadas e achados bloqueantes resolvidos.

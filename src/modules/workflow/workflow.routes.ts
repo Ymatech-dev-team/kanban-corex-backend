@@ -80,7 +80,7 @@ export function makeWorkflowRoutes(authenticate: Authenticate, authz: Authorizer
       const actor = await actorFor(req, req.params.id);
       const type = req.body.command.type;
       const reviewAction = ["record_finding", "validate_finding", "waive_finding", "request_changes"].includes(type);
-      if (!(["approve_review", "adopt_agent_review"].includes(type) ? actor.canApprove : reviewAction ? actor.canReview : actor.canWrite)) throw new AppError("SEM_PERMISSAO", "Sem permissão para esta ação");
+      if (!(["approve_review", "approve_with_reservations", "adopt_agent_review"].includes(type) ? actor.canApprove : reviewAction ? actor.canReview : actor.canWrite)) throw new AppError("SEM_PERMISSAO", "Sem permissão para esta ação");
       return { state: await repository.execute(actor, req.params.id, req.body) };
     });
     r.post("/tasks/:id/workflow/actions", { preHandler, schema: { params, body: requestActionSchema } }, async (req) => {

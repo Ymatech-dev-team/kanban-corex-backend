@@ -232,7 +232,8 @@ export class PrismaWorkflowStore implements WorkflowStore {
       const task = await this.lockTask(tx, actor.orgId, taskId);
       // Authorize the action before returning an old result, not just the project.
       const reviewAction = ["record_finding", "validate_finding", "waive_finding", "request_changes"].includes(command.type);
-      if (!(["approve_review", "adopt_agent_review"].includes(command.type) ? actor.canApprove : reviewAction ? actor.canReview : actor.canWrite)) throw new AppError("SEM_PERMISSAO", "Sem permissão para a operação");
+      if (!(["approve_review", "approve_with_reservations", "adopt_agent_review"].includes(command.type) ? actor.canApprove : reviewAction ? actor.canReview : actor.canWrite)) throw new AppError("SEM_PERMISSAO", "Sem permissão para a operação");
+      if (command.type === "approve_with_reservations" && actor.channel !== "WEB") throw new AppError("SEM_PERMISSAO", "Aprovação com ressalvas exige decisão humana pelo painel");
       const replay = await this.replay(tx, actor, input.operationId, digest);
       if (replay) return replay;
       const rows = await tx.$queryRaw<Array<{ aggregate: unknown }>>`SELECT aggregate FROM task_workflows WHERE "taskId"=${taskId} AND "orgId"=${actor.orgId} FOR UPDATE`;
@@ -257,9 +258,9 @@ export class PrismaWorkflowStore implements WorkflowStore {
       if (updated !== 1) throw new AppError("CONFLITO", "A versão da tarefa mudou");
       const status = state.stage === "DONE" ? "DONE" : ["DOING", "IN_REVIEW", "CHANGES_REQUESTED"].includes(state.stage) ? "DOING" : "TODO";
       await tx.$executeRaw`UPDATE tasks SET status=${status},"updatedAt"=now() WHERE id=${taskId} AND "orgId"=${actor.orgId}`;
-      if (["submit_review", "approve_review", "request_changes", "change_delivery", "adopt_agent_review"].includes(command.type)) {
-        const resolution = command.type === "approve_review" || command.type === "request_changes" ? "RESOLVED" : "CANCELLED";
-        const reason = command.type === "approve_review" ? "Entrega aprovada" : command.type === "request_changes" ? command.reason : command.type === "adopt_agent_review" ? "Revisão legada assumida pelo agente autorizado" : "Substituída por nova versão ou revisão";
+      if (["submit_review", "approve_review", "approve_with_reservations", "request_changes", "change_delivery", "adopt_agent_review"].includes(command.type)) {
+        const resolution = command.type === "approve_review" || command.type === "approve_with_reservations" || command.type === "request_changes" ? "RESOLVED" : "CANCELLED";
+        const reason = command.type === "approve_with_reservations" ? `Entrega aprovada com ressalvas: ${command.reason}` : command.type === "approve_review" ? "Entrega aprovada" : command.type === "request_changes" ? command.reason : command.type === "adopt_agent_review" ? "Revisão legada assumida pelo agente autorizado" : "Substituída por nova versão ou revisão";
         await tx.$executeRaw`UPDATE task_action_requests SET state=${resolution},response=${reason},"resolvedById"=${actor.userId},"resolvedAt"=now(),"updatedAt"=now(),version=version+1 WHERE "taskId"=${taskId} AND "orgId"=${actor.orgId} AND kind='REVIEW' AND state='OPEN'`;
       }
       if (command.type === "submit_review" && state.reviews.at(-1)?.reviewMode !== "AGENT") {
