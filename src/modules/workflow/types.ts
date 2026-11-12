@@ -23,6 +23,8 @@ export interface ReviewCheck {
 }
 
 export interface WorkflowReview {
+  /** Missing on legacy reviews; never infer human consent from absence. */
+  reviewMode?: "AGENT" | "HUMAN";
   cycle: number;
   deliveryRevision: number;
   submittedBy: string;
@@ -98,12 +100,13 @@ export type WorkflowCommand =
   | { type: "start_execution"; executionId: string; agent: string; sessionReference?: string }
   | { type: "report_progress"; executionId: string; status: WorkflowExecution["status"]; summary: ProgressSummary }
   | { type: "record_evidence"; summary: string; evidence: string[] }
-  | { type: "submit_review"; summary: string; evidence: string[]; checks: ReviewCheck[]; reviewerId?: string }
+  | { type: "submit_review"; summary: string; evidence: string[]; checks: ReviewCheck[]; reviewerId?: string; reviewMode?: "AGENT" | "HUMAN" }
   | { type: "record_finding"; id: string; description: string; severity: WorkflowFinding["severity"]; criterion: string; responsibleId: string; blocking: boolean }
   | { type: "report_fix"; findingId: string; evidence: string[] }
   | { type: "validate_finding"; findingId: string; cycle: number }
   | { type: "waive_finding"; findingId: string; cycle: number; reason: string }
   | { type: "request_changes"; cycle: number; reason: string }
+  | { type: "adopt_agent_review"; cycle: number }
   | { type: "approve_review"; cycle: number };
 
 export interface WorkflowEvent {

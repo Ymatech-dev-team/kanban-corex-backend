@@ -160,6 +160,12 @@ export function applyWorkflowCommand(
       requirePermission(actor.canWrite);
       if (state.stage !== "DOING") throw new AppError("VALIDACAO", "Submissão exige tarefa em execução");
       ready(state);
+      const reviewMode = command.reviewMode ?? "HUMAN";
+      if (reviewMode === "AGENT" && state.reviews.at(-1)?.reviewMode === "HUMAN") throw new AppError("SEM_PERMISSAO", "A revisão humana explícita não pode ser convertida em revisão de agente ao reenviar a entrega");
+      if (reviewMode === "AGENT" && (actor.channel !== "MCP" || !actor.connectionId ||
+        state.execution?.channel !== "MCP" || state.execution.ownerId !== actor.userId || state.execution.connectionId !== actor.connectionId)) {
+        throw new AppError("SEM_PERMISSAO", "Revisão de agente exige execução MCP vinculada à conexão autenticada");
+      }
       requireText(command.summary, "Resumo da entrega");
       requireEvidence(command.evidence);
       if (!Array.isArray(command.checks) || command.checks.length > 100) throw new AppError("VALIDACAO", "Verificações inválidas");
@@ -172,7 +178,7 @@ export function applyWorkflowCommand(
         names.add(check.name);
       }
       state.reviews.push({ cycle: (state.reviews.at(-1)?.cycle ?? 0) + 1, deliveryRevision: state.deliveryRevision,
-        submittedBy: actor.userId, submittedAt: at, summary: command.summary, evidence: [...command.evidence],
+        reviewMode, submittedBy: actor.userId, submittedAt: at, summary: command.summary, evidence: [...command.evidence],
         checks: structuredClone(command.checks), decision: "pending" });
       state.stage = "IN_REVIEW";
       // Submission is coordination, not evidence of human implementation.
@@ -240,6 +246,17 @@ export function applyWorkflowCommand(
       state.stage = "CHANGES_REQUESTED";
       break;
     }
+    case "adopt_agent_review": {
+      requirePermission(actor.canApprove);
+      const review = currentReview(state, command.cycle);
+      if (review.reviewMode !== undefined) throw new AppError("CONFLITO", "Esta revisão já possui modo explícito");
+      if (actor.channel !== "MCP" || !actor.connectionId || state.execution?.channel !== "MCP" ||
+        state.execution.ownerId !== actor.userId || state.executorIds.length > 0) {
+        throw new AppError("SEM_PERMISSAO", "A adoção exige execução MCP comprovada do usuário, sem executores humanos");
+      }
+      review.reviewMode = "AGENT";
+      break;
+    }
     case "approve_review": {
       requirePermission(actor.canApprove);
       if (actor.channel !== "WEB" && actor.channel !== "MCP") throw new AppError("SEM_PERMISSAO", "Aprovação exige painel ou conexão MCP autorizada");
@@ -247,6 +264,7 @@ export function applyWorkflowCommand(
         throw new AppError("SEM_PERMISSAO", "Aprovação MCP exige execução MCP vinculada e conexão autenticada");
       }
       const review = currentReview(state, command.cycle);
+      if (actor.channel === "MCP" && review.reviewMode !== "AGENT") throw new AppError("SEM_PERMISSAO", "Revisão MCP exige modo AGENT; adote somente revisão legada elegível, nunca uma revisão HUMAN explícita");
       if (state.executorIds.includes(actor.userId)) throw new AppError("SEM_PERMISSAO", "O executor não pode aprovar a própria entrega");
       if (state.findings.some((finding) => finding.blocking &&
         (!(finding.state === "validated" || finding.state === "waived") || finding.resolvedDeliveryRevision !== state.deliveryRevision))) {

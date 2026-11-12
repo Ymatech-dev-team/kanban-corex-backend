@@ -6,9 +6,13 @@ export interface WorkflowAction {
   createdAt: Date | string;
   options?: string[];
   response?: string | null;
+  taskTitle?: string; clientName?: string; projectName?: string;
 }
 export interface ActionCursor { createdAt: string; id: string }
+export interface MonitoringCursor { updatedAt: string; taskId: string }
+export interface WorkflowMonitoringItem { taskId: string; title: string; clientName: string; projectName: string; updatedAt: Date | string; state: WorkflowState }
 export interface WorkflowStore {
+  listMonitoring?(orgId: string, userId: string, before?: MonitoringCursor, limit?: number): Promise<WorkflowMonitoringItem[]>;
   load(orgId: string, taskId: string): Promise<WorkflowState | null>;
   events(orgId: string, taskId: string, beforeVersion?: number, limit?: number): Promise<unknown[]>;
   actions(orgId: string, taskId: string): Promise<WorkflowAction[]>;

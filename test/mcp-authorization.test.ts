@@ -28,26 +28,26 @@ beforeEach(() => {
 });
 
 describe("MCP authorization boundary", () => {
-  it("requires explicit approval consent in both token and immutable grant", async () => {
+  it.each(["approve_review", "adopt_agent_review"])("requires explicit approval consent in token and grant for %s", async (tool) => {
     users.findById.mockResolvedValue({ ...user(), rolePermissions: [PERMISSIONS.tarefas_aprovar] });
-    await expect(boundary().authorize("token", "approve_review", "project")).rejects.toMatchObject({code:"SEM_PERMISSAO",message:expect.stringMatching(/reconecte.*tasks:approve/i)});
+    await expect(boundary().authorize("token", tool, "project")).rejects.toMatchObject({code:"SEM_PERMISSAO",message:expect.stringMatching(/reconecte.*tasks:approve/i)});
     verifier.verifyAccessToken.mockResolvedValue({ ...claims(), scopes:[...claims().scopes,"tasks:approve"] });
-    await expect(boundary().authorize("token", "approve_review", "project")).rejects.toMatchObject({code:"SEM_PERMISSAO",message:expect.stringMatching(/reconecte.*tasks:approve/i)});
+    await expect(boundary().authorize("token", tool, "project")).rejects.toMatchObject({code:"SEM_PERMISSAO",message:expect.stringMatching(/reconecte.*tasks:approve/i)});
     grants.findById.mockResolvedValue({ ...grant(), scopes:[...grant().scopes,"tasks:approve"] });
-    expect((await boundary().authorize("token", "approve_review", "project")).session.permissions.has(PERMISSIONS.tarefas_aprovar)).toBe(true);
+    expect((await boundary().authorize("token", tool, "project")).session.permissions.has(PERMISSIONS.tarefas_aprovar)).toBe(true);
     verifier.verifyAccessToken.mockResolvedValue(claims());
-    await expect(boundary().authorize("token", "approve_review", "project")).rejects.toMatchObject({code:"SEM_PERMISSAO",message:expect.stringMatching(/reconecte.*tasks:approve/i)});
+    await expect(boundary().authorize("token", tool, "project")).rejects.toMatchObject({code:"SEM_PERMISSAO",message:expect.stringMatching(/reconecte.*tasks:approve/i)});
   });
-  it("rechecks approval account permission, tenant and membership", async () => {
+  it.each(["approve_review", "adopt_agent_review"])("rechecks account permission, tenant and membership for %s", async (tool) => {
     verifier.verifyAccessToken.mockResolvedValue({...claims(),scopes:["tasks:approve"]});
     grants.findById.mockResolvedValue({...grant(),scopes:["tasks:approve"]});
-    await expect(boundary().authorize("token","approve_review","project")).rejects.toMatchObject({code:"SEM_PERMISSAO"});
+    await expect(boundary().authorize("token",tool,"project")).rejects.toMatchObject({code:"SEM_PERMISSAO"});
     users.findById.mockResolvedValue({...user(),rolePermissions:[PERMISSIONS.tarefas_aprovar]});
     projects.findById.mockResolvedValue({id:"project",orgId:"other",deletedAt:null});
-    await expect(boundary().authorize("token","approve_review","project")).rejects.toMatchObject({code:"NAO_ENCONTRADO"});
+    await expect(boundary().authorize("token",tool,"project")).rejects.toMatchObject({code:"NAO_ENCONTRADO"});
     projects.findById.mockResolvedValue({id:"project",orgId:"org",deletedAt:null});
     access.isMember.mockResolvedValue(false);
-    await expect(boundary().authorize("token","approve_review","project")).rejects.toMatchObject({code:"NAO_ENCONTRADO"});
+    await expect(boundary().authorize("token",tool,"project")).rejects.toMatchObject({code:"NAO_ENCONTRADO"});
   });
   it("delegates correction requests and final evidence only with current permissions", async () => {
     users.findById.mockResolvedValue({...user(),rolePermissions:[PERMISSIONS.tarefas_revisar,PERMISSIONS.tarefas_editar]});

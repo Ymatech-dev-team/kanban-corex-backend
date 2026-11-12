@@ -5,7 +5,7 @@ import { normalizeExecutorProvenance } from "./executor-provenance.js";
 import { applyWorkflowCommand, createWorkflow } from "./workflow.js";
 import { commandSchema, executeSchema, initSchema, createManagedTaskSchema, workflowStateSchema, requestActionSchema, resolveActionSchema, type ExecuteWorkflowInput, type InitializeWorkflowInput } from "./schemas.js";
 import type { WorkflowActor, WorkflowState } from "./types.js";
-import type { ActionCursor, WorkflowAction, WorkflowStore, RequestActionInput, ResolveActionInput, CreateManagedTaskInput } from "./persistence.js";
+import type { ActionCursor, MonitoringCursor, WorkflowMonitoringItem, WorkflowAction, WorkflowStore, RequestActionInput, ResolveActionInput, CreateManagedTaskInput } from "./persistence.js";
 
 type Tx = Prisma.TransactionClient;
 type TaskRow = { id: string; status: string; projectId: string };
@@ -142,7 +142,25 @@ export class PrismaWorkflowStore implements WorkflowStore {
   }
 
   async listActions(orgId: string, recipientId: string, before?: ActionCursor, limit = 51): Promise<WorkflowAction[]> {
-    return this.db.$queryRaw(Prisma.sql`SELECT a.id,a."taskId",a."orgId",a."recipientId",a.kind,a.state,a.question,a.options,a.response,a.version,a."createdAt" FROM task_action_requests a JOIN tasks t ON t.id=a."taskId" AND t."orgId"=a."orgId" JOIN projects p ON p.id=t."projectId" AND p."orgId"=t."orgId" JOIN engagements e ON e.id=t."engagementId" JOIN users u ON u.id=a."recipientId" AND u."orgId"=a."orgId" LEFT JOIN roles r ON r.id=u."roleId" AND r."orgId"=u."orgId" WHERE a."orgId"=${orgId} AND a."recipientId"=${recipientId} AND a.state='OPEN' AND t."deletedAt" IS NULL AND p."deletedAt" IS NULL AND e."deletedAt" IS NULL AND u."deletedAt" IS NULL AND ('projetos.acessar_todos'=ANY(u."extraPermissions") OR 'projetos.acessar_todos'=ANY(r.permissions) OR EXISTS(SELECT 1 FROM project_members m WHERE m."projectId"=t."projectId" AND m."userId"=u.id)) ${before ? Prisma.sql`AND (a."createdAt",a.id) < (${new Date(before.createdAt)},${before.id})` : Prisma.empty} ORDER BY a."createdAt" DESC,a.id DESC LIMIT ${limit}`);
+    return this.db.$queryRaw(Prisma.sql`SELECT a.id,a."taskId",a."orgId",a."recipientId",a.kind,a.state,a.question,a.options,a.response,a.version,a."createdAt",t.title AS "taskTitle",p.name AS "clientName",e.name AS "projectName" FROM task_action_requests a JOIN tasks t ON t.id=a."taskId" AND t."orgId"=a."orgId" JOIN projects p ON p.id=t."projectId" AND p."orgId"=t."orgId" JOIN engagements e ON e.id=t."engagementId" AND e."orgId"=t."orgId" AND e."projectId"=t."projectId" JOIN users u ON u.id=a."recipientId" AND u."orgId"=a."orgId" LEFT JOIN roles r ON r.id=u."roleId" AND r."orgId"=u."orgId" WHERE a."orgId"=${orgId} AND a."recipientId"=${recipientId} AND a.state='OPEN' AND (a.kind<>'REVIEW' OR EXISTS(SELECT 1 FROM task_workflows w WHERE w."taskId"=t.id AND w."orgId"=a."orgId" AND w.aggregate->'reviews'->-1->>'reviewMode'='HUMAN')) AND t."deletedAt" IS NULL AND p."deletedAt" IS NULL AND e."deletedAt" IS NULL AND u."deletedAt" IS NULL AND ('projetos.acessar_todos'=ANY(u."extraPermissions") OR 'projetos.acessar_todos'=ANY(r.permissions) OR EXISTS(SELECT 1 FROM project_members m WHERE m."projectId"=t."projectId" AND m."userId"=u.id)) ${before ? Prisma.sql`AND (a."createdAt",a.id) < (${new Date(before.createdAt)},${before.id})` : Prisma.empty} ORDER BY a."createdAt" DESC,a.id DESC LIMIT ${limit}`);
+  }
+
+  async listMonitoring(orgId: string, userId: string, before?: MonitoringCursor, limit = 51): Promise<WorkflowMonitoringItem[]> {
+    const rows = await this.db.$queryRaw<Array<Omit<WorkflowMonitoringItem, "state"> & { aggregate: unknown }>>(Prisma.sql`
+      SELECT t.id AS "taskId",t.title,p.name AS "clientName",e.name AS "projectName",w."updatedAt",w.aggregate
+      FROM task_workflows w JOIN tasks t ON t.id=w."taskId" AND t."orgId"=w."orgId"
+      JOIN projects p ON p.id=t."projectId" AND p."orgId"=t."orgId"
+      JOIN engagements e ON e.id=t."engagementId" AND e."orgId"=t."orgId" AND e."projectId"=t."projectId"
+      JOIN users u ON u.id=${userId} AND u."orgId"=w."orgId"
+      LEFT JOIN roles r ON r.id=u."roleId" AND r."orgId"=u."orgId"
+      WHERE w."orgId"=${orgId} AND t."deletedAt" IS NULL AND p."deletedAt" IS NULL AND e."deletedAt" IS NULL AND u."deletedAt" IS NULL
+      AND ('projetos.acessar_todos'=ANY(u."extraPermissions") OR 'projetos.acessar_todos'=ANY(r.permissions)
+        OR EXISTS(SELECT 1 FROM project_members m WHERE m."projectId"=t."projectId" AND m."userId"=u.id))
+      AND (w.aggregate->>'responsibleId'=${userId} OR w.aggregate->'execution'->>'ownerId'=${userId} OR t."assigneeId"=${userId}
+        OR EXISTS(SELECT 1 FROM task_action_requests a WHERE a."taskId"=t.id AND a."orgId"=w."orgId" AND a."recipientId"=${userId} AND a.kind='REVIEW' AND a.state='OPEN'))
+      ${before ? Prisma.sql`AND (w."updatedAt",t.id)<(${new Date(before.updatedAt)},${before.taskId})` : Prisma.empty}
+      ORDER BY w."updatedAt" DESC,t.id DESC LIMIT ${limit}`);
+    return Promise.all(rows.map(async ({ aggregate, ...row }) => ({ ...row, state: await this.normalizeExecutors(this.db, workflowStateSchema.parse(aggregate)) })));
   }
 
   private async lockTask(tx: Tx, orgId: string, taskId: string): Promise<TaskRow> {
@@ -214,19 +232,21 @@ export class PrismaWorkflowStore implements WorkflowStore {
       const task = await this.lockTask(tx, actor.orgId, taskId);
       // Authorize the action before returning an old result, not just the project.
       const reviewAction = ["record_finding", "validate_finding", "waive_finding", "request_changes"].includes(command.type);
-      if (!(command.type === "approve_review" ? actor.canApprove : reviewAction ? actor.canReview : actor.canWrite)) throw new AppError("SEM_PERMISSAO", "Sem permissão para a operação");
+      if (!(["approve_review", "adopt_agent_review"].includes(command.type) ? actor.canApprove : reviewAction ? actor.canReview : actor.canWrite)) throw new AppError("SEM_PERMISSAO", "Sem permissão para a operação");
       const replay = await this.replay(tx, actor, input.operationId, digest);
       if (replay) return replay;
       const rows = await tx.$queryRaw<Array<{ aggregate: unknown }>>`SELECT aggregate FROM task_workflows WHERE "taskId"=${taskId} AND "orgId"=${actor.orgId} FOR UPDATE`;
       if (!rows[0]) throw new AppError("NAO_ENCONTRADO", "Fluxo ainda não ativado");
       const current = await this.normalizeExecutors(tx, workflowStateSchema.parse(rows[0].aggregate));
       if (command.type === "record_finding") await this.assertResponsible(tx, actor, task, command.responsibleId);
-      if (command.type === "submit_review") {
+      if (command.type === "submit_review" && command.reviewMode !== "AGENT") {
         if (!command.reviewerId) throw new AppError("VALIDACAO", "Escolha explicitamente quem deve revisar a entrega");
         await this.assertResponsible(tx, actor, task, command.reviewerId);
         const reviewers = await tx.$queryRaw<Array<{ id: string }>>`SELECT u.id FROM users u LEFT JOIN roles r ON r.id=u."roleId" AND r."orgId"=u."orgId" WHERE u.id=${command.reviewerId} AND u."orgId"=${actor.orgId} AND u."deletedAt" IS NULL AND (u."extraPermissions" && ARRAY['tarefas.revisar','tarefas.aprovar']::text[] OR r.permissions && ARRAY['tarefas.revisar','tarefas.aprovar']::text[])`;
         if (!reviewers.length) throw new AppError("VALIDACAO", "O revisor precisa de permissão de revisão ou aprovação");
         if (current.executorIds.includes(command.reviewerId)) throw new AppError("VALIDACAO", "Escolha um revisor diferente dos executores humanos");
+      }
+      if (command.type === "submit_review") {
         for (const name of ["typecheck", "lint", "test", "build"]) {
           if (!command.checks.some((check) => check.name === name && check.required)) throw new AppError("VALIDACAO", `Informe a verificação obrigatória ${name}`);
         }
@@ -237,13 +257,13 @@ export class PrismaWorkflowStore implements WorkflowStore {
       if (updated !== 1) throw new AppError("CONFLITO", "A versão da tarefa mudou");
       const status = state.stage === "DONE" ? "DONE" : ["DOING", "IN_REVIEW", "CHANGES_REQUESTED"].includes(state.stage) ? "DOING" : "TODO";
       await tx.$executeRaw`UPDATE tasks SET status=${status},"updatedAt"=now() WHERE id=${taskId} AND "orgId"=${actor.orgId}`;
-      if (["submit_review", "approve_review", "request_changes", "change_delivery"].includes(command.type)) {
+      if (["submit_review", "approve_review", "request_changes", "change_delivery", "adopt_agent_review"].includes(command.type)) {
         const resolution = command.type === "approve_review" || command.type === "request_changes" ? "RESOLVED" : "CANCELLED";
-        const reason = command.type === "approve_review" ? "Entrega aprovada" : command.type === "request_changes" ? command.reason : "Substituída por nova versão ou revisão";
+        const reason = command.type === "approve_review" ? "Entrega aprovada" : command.type === "request_changes" ? command.reason : command.type === "adopt_agent_review" ? "Revisão legada assumida pelo agente autorizado" : "Substituída por nova versão ou revisão";
         await tx.$executeRaw`UPDATE task_action_requests SET state=${resolution},response=${reason},"resolvedById"=${actor.userId},"resolvedAt"=now(),"updatedAt"=now(),version=version+1 WHERE "taskId"=${taskId} AND "orgId"=${actor.orgId} AND kind='REVIEW' AND state='OPEN'`;
       }
-      if (command.type === "submit_review") {
-        await tx.$executeRaw`INSERT INTO task_action_requests (id,"taskId","orgId","recipientId","createdById",kind,question) VALUES (${randomUUID()},${taskId},${actor.orgId},${command.reviewerId!},${actor.userId},'REVIEW',${`Revisar entrega — ciclo ${state.reviews.at(-1)!.cycle}: ${command.summary}`.slice(0, 8000)})`;
+      if (command.type === "submit_review" && state.reviews.at(-1)?.reviewMode !== "AGENT") {
+        await tx.$executeRaw`INSERT INTO task_action_requests (id,"taskId","orgId","recipientId","createdById",kind,question) VALUES (${randomUUID()},${taskId},${actor.orgId},${command.reviewerId!},${actor.userId},'REVIEW',${`Revisar entrega — ciclo ${state.reviews.at(-1)!.cycle}`})`;
       }
       await this.commitEvent(tx, actor, input.operationId, digest, command.type, input.expectedVersion, state, result.event);
       return state;

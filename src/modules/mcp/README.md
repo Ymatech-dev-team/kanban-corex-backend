@@ -79,3 +79,11 @@ Fontes: [headers controlados pela Vercel](https://vercel.com/docs/headers/reques
 ## Ciclo autônomo
 
 Consulte tarefa e versão; execute e verifique; envie revisão com evidências reais. Check reprovado ou achado aberto exige `request_changes`, correção no mesmo card, nova execução se a anterior estiver FINISHED, novas verificações e `submit_for_review`. Informe e valide correções dos mesmos achados; somente depois chame `approve_review` no ciclo atual. O servidor não executa testes e não comprova um resultado apenas porque o agente informou passed. Use `record_delivery_evidence` para anexar resultados posteriores sem alterar escopo, checks ou aprovação, inclusive em DONE. O conector não concede autorização de Git/merge/deploy do projeto.
+
+## Revisão autônoma e retomada do legado
+
+`submit_for_review` aceita `reviewMode: AGENT` sem `reviewerId`: a execução MCP precisa pertencer à conta/conexão autenticada. Sem modo e sem reviewerId, MCP assume AGENT; chamadas antigas com reviewerId conservam HUMAN. Use AGENT explicitamente no fluxo autônomo. HUMAN é reservado à revisão humana solicitada e não pode ser aprovado pelo MCP.
+
+Para revisão antiga sem modo, `adopt_agent_review` exige tasks:approve/permissão atual, ciclo vigente, execução MCP da mesma conta e ausência de executores humanos. Registra adoção e cancela a solicitação REVIEW antiga na mesma transação; não aprova nem modifica checks/achados. Revisão HUMAN explícita não admite adoção. Após adoção, consultar o estado e continuar corrigindo até approve_review retornar DONE.
+
+Respostas incluem `completionBlockers` e `suggestedTool`, além de versão/ciclo no estado. Essas sugestões não substituem autorização nem executam processos. Corrigir checks/achados, reexecutar e verificar de verdade; nunca transformar falha antiga/fora de escopo em passed. Não pedir aceite final para AGENT; solicitar ação humana somente por decisão ou acesso concreto fora do plano.

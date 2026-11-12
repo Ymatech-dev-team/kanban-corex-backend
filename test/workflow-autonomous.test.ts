@@ -7,7 +7,7 @@ const actor: WorkflowActor = { orgId: "org", userId: "user", channel: "MCP", con
 const at = "2026-11-08T12:00:00.000Z";
 const checks = ["typecheck", "lint", "test", "build"].map(name => ({ name, required: true, status: "passed" as const }));
 const run = (state: WorkflowState, command: WorkflowCommand, who = actor) => applyWorkflowCommand(state, who, command, state.version, at).state;
-const submission = { type: "submit_review" as const, summary: "Implemented and verified", evidence: ["test log"], checks };
+const submission = { type: "submit_review" as const, reviewMode: "AGENT" as const, summary: "Implemented and verified", evidence: ["test log"], checks };
 function executing() {
   let state = createWorkflow({ taskId: "task", orgId: "org", responsibleId: "user", criteria: ["works"], context: "approved plan" });
   state = run(state, { type: "transition", to: "READY" });

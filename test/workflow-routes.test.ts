@@ -16,7 +16,7 @@ function fixture(opts: { enabled?: boolean; authenticated?: boolean; projectAcce
   registerErrorHandler(app);
   const tasks = { getOrThrow: vi.fn(async () => ({ id: "t", orgId: "o", projectId: "p" })) } as unknown as Pick<TaskService, "getOrThrow">;
   const authz = new Authorizer({ isMember: async () => opts.projectAccess !== false, listAccessibleProjectIds: async () => ["p"] });
-  const repo = { load: vi.fn(async () => null), events: vi.fn(async () => []), actions: vi.fn(async () => []), listActions: vi.fn(async () => []), initialize: vi.fn(), execute: vi.fn() };
+  const repo = { listMonitoring: vi.fn().mockResolvedValue([]), load: vi.fn(async () => null), events: vi.fn(async () => []), actions: vi.fn(async () => []), listActions: vi.fn(async () => []), initialize: vi.fn(), execute: vi.fn() };
   app.register(makeWorkflowRoutes(async (req) => {
     if (opts.authenticated === false) throw new AppError("NAO_AUTENTICADO", "Sem sessão");
     req.session = session;
@@ -25,7 +25,7 @@ function fixture(opts: { enabled?: boolean; authenticated?: boolean; projectAcce
 }
 
 describe("workflow route boundary", () => {
-  it.each(["/tasks/t/workflow", "/tasks/actions/mine"])("requires authentication on %s", async (url) => {
+  it.each(["/tasks/t/workflow", "/tasks/actions/mine", "/tasks/workflows/mine"])("requires authentication on %s", async (url) => {
     const { app, repo } = fixture({ authenticated: false });
     try { expect((await app.inject({ method: "GET", url })).statusCode).toBe(401); expect(repo.load).not.toHaveBeenCalled(); }
     finally { await app.close(); }
@@ -62,4 +62,9 @@ describe("workflow route boundary", () => {
       expect(repo.execute).not.toHaveBeenCalled();
     } finally { await app.close(); }
   });
+});
+
+describe("monitoring route pagination and authorization", () => {
+ it("validates cursor before querying and scopes query to authenticated account", async()=>{const {app,repo}=fixture();try{expect((await app.inject({method:'GET',url:'/tasks/workflows/mine?cursor=bad'})).statusCode).toBe(400);expect(repo.listMonitoring).not.toHaveBeenCalled();const response=await app.inject({method:'GET',url:'/tasks/workflows/mine?limit=2'});expect(response.json()).toEqual({items:[],nextCursor:null});expect(repo.listMonitoring).toHaveBeenCalledWith('o','u',undefined,3);}finally{await app.close();}});
+ it("never returns inaccessible rows, preserves cursor for a partially visible page", async()=>{const {app,repo}=fixture({projectAccess:false});const row={taskId:'t',title:'private',updatedAt:'2026-11-12T12:00:00.000Z',state:{}};repo.listMonitoring.mockResolvedValue([row,{...row,taskId:'older'}]);try{const response=await app.inject({method:'GET',url:'/tasks/workflows/mine?limit=1'});expect(response.statusCode).toBe(200);expect(response.json().items).toEqual([]);const cursor=JSON.parse(Buffer.from(response.json().nextCursor,'base64url').toString());expect(cursor).toEqual({updatedAt:row.updatedAt,taskId:'t'});}finally{await app.close();}});
 });

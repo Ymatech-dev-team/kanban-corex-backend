@@ -76,3 +76,12 @@ describe("workflow persistence adapter (transaction mocked, not a database proof
     expect(db.execute).not.toHaveBeenCalled();
   });
 });
+
+describe('agent review persistence routing',()=>{
+ const agent={...actor,channel:'MCP' as const,connectionId:'grant',canReview:true,canApprove:true};
+ const checks=['typecheck','lint','test','build'].map(name=>({name,status:'passed' as const,required:true}));
+ function agentDb(){const db=database({stage:'DOING'});db.state.execution={id:'run',agent:'Codex',ownerId:'user',channel:'MCP',connectionId:'grant',status:'RUNNING',lastUpdatedAt:'2026-11-12T12:00:00.000Z'};return db;}
+ it('submits AGENT atomically without user lookup or human request INSERT',async()=>{const db=agentDb();const out=await db.store.execute(agent,'task',{operationId:'submit',expectedVersion:0,command:{type:'submit_review',reviewMode:'AGENT',summary:'done',evidence:['log'],checks}});expect(out.reviews[0].reviewMode).toBe('AGENT');expect(db.calls.some(s=>s.startsWith('INSERT INTO task_action_requests'))).toBe(false);expect(db.calls.some(s=>s.includes('FROM users'))).toBe(false);expect(db.calls.some(s=>s.startsWith('INSERT INTO workflow_events'))).toBe(true);});
+ it('rejects AGENT submission with a missing mandatory check before persistence',async()=>{const db=agentDb();await expect(db.store.execute(agent,'task',{operationId:'submit',expectedVersion:0,command:{type:'submit_review',reviewMode:'AGENT',summary:'done',evidence:['log'],checks:checks.slice(1)}})).rejects.toMatchObject({code:'VALIDACAO'});expect(db.execute).not.toHaveBeenCalled();});
+ it('adopts only legacy review and cancels its human request with audited CAS',async()=>{const db=agentDb();db.state.stage='IN_REVIEW';db.state.reviews=[{cycle:1,deliveryRevision:1,submittedBy:'user',submittedAt:'2026-11-12T12:00:00.000Z',summary:'done',evidence:['log'],checks,decision:'pending'}];const out=await db.store.execute(agent,'task',{operationId:'adopt',expectedVersion:0,command:{type:'adopt_agent_review',cycle:1}});expect(out.reviews[0]).toMatchObject({reviewMode:'AGENT',decision:'pending',checks});expect(db.calls.some(s=>s.startsWith('UPDATE task_action_requests'))).toBe(true);expect(db.calls.some(s=>s.startsWith('INSERT INTO workflow_events'))).toBe(true);expect(db.calls.some(s=>s.startsWith('INSERT INTO task_action_requests'))).toBe(false);});
+});

@@ -1,0 +1,25 @@
+import { describe, expect, it } from 'vitest';
+import { applyWorkflowCommand, createWorkflow } from '../src/modules/workflow/workflow.js';
+import { commandSchema, workflowStateSchema } from '../src/modules/workflow/schemas.js';
+import type { WorkflowActor } from '../src/modules/workflow/types.js';
+const actor: WorkflowActor = { orgId:'org', userId:'u', channel:'MCP', connectionId:'grant', canWrite:true, canReview:true, canApprove:true, canReopen:false };
+const at='2026-11-12T12:00:00.000Z';
+const state=()=>({...createWorkflow({orgId:'org',taskId:'task',responsibleId:'u',context:'approved',criteria:['works']}),stage:'DOING' as const,execution:{id:'run',agent:'Claude',ownerId:'u',channel:'MCP' as const,connectionId:'grant',status:'RUNNING' as const,lastUpdatedAt:at}});
+const submit=(reviewMode:string)=>commandSchema.parse({type:'submit_review',reviewMode,summary:'delivered',evidence:['log'],checks:['typecheck','lint','test','build'].map(name=>({name,status:'passed',required:true}))});
+describe('explicit review ownership',()=>{
+ it('persists an agent review without human reviewer',()=>{const s=state();const out=applyWorkflowCommand(s,actor,submit('AGENT'),s.version,at).state;expect(out.reviews[0]).toMatchObject({reviewMode:'AGENT'});expect(workflowStateSchema.parse(out).reviews[0]).toHaveProperty('reviewMode','AGENT');});
+ it('rejects WEB posing as agent reviewer',()=>{const s=state();expect(()=>applyWorkflowCommand(s,{...actor,channel:'WEB'},submit('AGENT'),s.version,at)).toThrow(/MCP/);});
+ it('rejects another connection claiming the agent execution',()=>{const s=state();expect(()=>applyWorkflowCommand(s,{...actor,connectionId:'other'},submit('AGENT'),s.version,at)).toThrow(/execução/);});
+ it('keeps old review snapshots unclassified',()=>{const s=state();const out=applyWorkflowCommand(s,actor,submit('AGENT'),s.version,at).state;delete out.reviews[0].reviewMode;expect(workflowStateSchema.parse(out).reviews[0]).not.toHaveProperty('reviewMode');});
+});
+
+describe('adopting legacy review without bypassing gates',()=>{
+ const legacy=()=>{const s=state();const out=applyWorkflowCommand(s,actor,submit('AGENT'),s.version,at).state;delete out.reviews[0].reviewMode;return out;};
+ it('changes only mode/version and keeps pending checks and findings intact',()=>{const s=legacy();s.reviews[0].checks[0].status='failed';const out=applyWorkflowCommand(s,actor,{type:'adopt_agent_review',cycle:1},s.version,at).state;expect(out).toEqual({...s,version:s.version+1,reviews:[{...s.reviews[0],reviewMode:'AGENT'}]});expect(()=>applyWorkflowCommand(out,actor,{type:'approve_review',cycle:1},out.version,at)).toThrow(/verifica/);});
+ it('rejects explicit HUMAN and AGENT modes',()=>{for(const reviewMode of ['HUMAN','AGENT'] as const){const s=legacy();s.reviews[0].reviewMode=reviewMode;expect(()=>applyWorkflowCommand(s,actor,{type:'adopt_agent_review',cycle:1},s.version,at)).toThrow(/modo/);}});
+ it('rejects missing permission, WEB channel, other owner and human executors',()=>{for(const who of [{...actor,canApprove:false},{...actor,channel:'WEB' as const},{...actor,userId:'other'}]){const s=legacy();expect(()=>applyWorkflowCommand(s,who,{type:'adopt_agent_review',cycle:1},s.version,at)).toThrow();}const s=legacy();s.executorIds=['u'];expect(()=>applyWorkflowCommand(s,actor,{type:'adopt_agent_review',cycle:1},s.version,at)).toThrow(/humanos/);});
+});
+
+it('cannot bypass explicit HUMAN or legacy adoption through direct MCP approval',()=>{for(const mode of ['HUMAN',undefined] as const){const s=state();const out=applyWorkflowCommand(s,actor,submit('AGENT'),s.version,at).state;out.reviews[0].reviewMode=mode;expect(()=>applyWorkflowCommand(out,actor,{type:'approve_review',cycle:1},out.version,at)).toThrow(/modo AGENT/);}});
+it('rejects stale cycle, stale delivery and nonpending review adoption',()=>{for(const mutation of [(s:ReturnType<typeof state>)=>s.reviews[0].cycle=2,(s:ReturnType<typeof state>)=>s.reviews[0].deliveryRevision=2,(s:ReturnType<typeof state>)=>s.reviews[0].decision='approved']){const s=state();const out=applyWorkflowCommand(s,actor,submit('AGENT'),s.version,at).state;delete out.reviews[0].reviewMode;mutation(out as ReturnType<typeof state>);expect(()=>applyWorkflowCommand(out,actor,{type:'adopt_agent_review',cycle:1},out.version,at)).toThrow(/revisão/);}});
+it('does not downgrade explicit HUMAN by requesting changes or changing delivery',()=>{for(const changeDelivery of [false,true]){const s=state();let out=applyWorkflowCommand(s,actor,submit('HUMAN'),s.version,at).state;out=applyWorkflowCommand(out,actor,{type:'request_changes',cycle:1,reason:'fix'},out.version,at).state;if(changeDelivery)out=applyWorkflowCommand(out,actor,{type:'change_delivery',reason:'scope adjustment'},out.version,at).state;out=applyWorkflowCommand(out,actor,{type:'transition',to:'DOING'},out.version,at).state;expect(()=>applyWorkflowCommand(out,actor,submit('AGENT'),out.version,at)).toThrow(/humana/i);}});

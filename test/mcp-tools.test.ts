@@ -16,6 +16,10 @@ function setup(enabled=true){
  return {authorization,tasks,engagements,workflow,tools,call,ctx};
 }
 describe('Corex MCP authorized tool adapters',()=>{
+ it('defaults submit without reviewer to AGENT and preserves explicit HUMAN',async()=>{const s=setup();const input={taskId:'task',operationId:'op',expectedVersion:2,summary:'done',evidence:['log'],checks:[]};await s.call('submit_for_review',input);expect(s.workflow.execute).toHaveBeenLastCalledWith(expect.anything(),'task',expect.objectContaining({command:expect.objectContaining({reviewMode:'AGENT'})}));await s.call('submit_for_review',{...input,reviewerId:'user',reviewMode:'HUMAN'});expect(s.workflow.execute).toHaveBeenLastCalledWith(expect.anything(),'task',expect.objectContaining({command:expect.objectContaining({reviewMode:'HUMAN',reviewerId:'user'})}));});
+ it('routes legacy adoption with scoped authorization',async()=>{const s=setup();s.ctx.session.permissions.add(PERMISSIONS.tarefas_aprovar);await s.call('adopt_agent_review',{taskId:'task',operationId:'adopt',expectedVersion:2,cycle:1});expect(s.authorization.authorize).toHaveBeenLastCalledWith('opaque','adopt_agent_review','canonical-project');expect(s.workflow.execute).toHaveBeenLastCalledWith(expect.objectContaining({canApprove:true}),'task',expect.objectContaining({command:{type:'adopt_agent_review',cycle:1}}));});
+ it('reports structured check blockers without asking for final human acceptance',async()=>{const s=setup();s.workflow.load.mockResolvedValue({taskId:'task',version:3,stage:'IN_REVIEW',reviews:[{reviewMode:'AGENT',checks:[{name:'lint',status:'failed',required:true}]}],findings:[]});const out=await s.call('get_task',{taskId:'task'});expect(out).toMatchObject({suggestedTool:'request_changes',completionBlockers:expect.arrayContaining([{kind:'CHECK',id:'lint',status:'failed'}])});});
+
  it('does not write when approval consent is missing and preserves reconnection guidance',async()=>{
   const s=setup();
   s.authorization.authorize.mockResolvedValueOnce(s.ctx).mockRejectedValueOnce(new Error('Reconecte o aplicativo e autorize a conclusão de tarefas (tasks:approve).'));

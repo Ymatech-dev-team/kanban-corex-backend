@@ -34,3 +34,9 @@ Action requests have versioned creation and human response/cancellation endpoint
 Agents request changes on the same review when checks or findings fail, then restart a finished execution on that same task, report fixes, submit a new review cycle and validate the findings before approving. A generic transition still cannot bypass review into DONE. Required typecheck/lint/test/build must each occur once, be required and passed; additional required checks must also pass. Reported check results remain declarations backed by supplied evidence, not server-executed CI verification.
 
 `record_evidence` records a summary and evidence references as an immutable versioned event, including after FINISHED or DONE. It requires write permission, the current expectedVersion and a distinct idempotent operationId. It never alters reviewed evidence/checks, delivery revision, execution state, summary or acceptance, so deployment and merge notes can be attached without reopening or falsifying the prior review. Evidence is visible through the timeline. `report_progress` on a finished execution remains rejected.
+
+## Acompanhamento e fila humana
+
+GET `/tasks/workflows/mine` pagina por `(updatedAt,taskId)` os workflows acessíveis ligados à conta (responsável, execução, atribuição ou pedido REVIEW aberto). Retorna título, cliente/projeto e snapshot validado, sem alegar atividade ao vivo.
+
+`/tasks/actions/mine` mantém pedidos explícitos e REVIEW com modo HUMAN; legado sem modo fica no acompanhamento para classificação, sem escrita durante leitura. A adoção explícita MCP gera evento e encerra a solicitação antiga, preservando o histórico. AGENT não cria pedido humano no submit. Nenhuma migration relacional necessária: reviewMode opcional no agregado preserva leitura de snapshots antigos.
