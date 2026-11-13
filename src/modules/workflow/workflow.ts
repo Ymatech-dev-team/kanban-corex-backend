@@ -161,9 +161,8 @@ export function applyWorkflowCommand(
       if (state.stage !== "DOING") throw new AppError("VALIDACAO", "Submissão exige tarefa em execução");
       ready(state);
       const reviewMode = command.reviewMode ?? "HUMAN";
-      if (reviewMode === "AGENT" && state.reviews.at(-1)?.reviewMode === "HUMAN") throw new AppError("SEM_PERMISSAO", "A revisão humana explícita não pode ser convertida em revisão de agente ao reenviar a entrega");
-      if (reviewMode === "AGENT" && (actor.channel !== "MCP" || !actor.connectionId ||
-        state.execution?.channel !== "MCP" || state.execution.ownerId !== actor.userId || state.execution.connectionId !== actor.connectionId)) {
+      if (reviewMode === "AGENT" && (state.execution?.channel !== "MCP" ||
+        (actor.channel === "MCP" ? !actor.connectionId || state.execution.ownerId !== actor.userId : actor.channel !== "WEB"))) {
         throw new AppError("SEM_PERMISSAO", "Revisão de agente exige execução MCP vinculada à conexão autenticada");
       }
       requireText(command.summary, "Resumo da entrega");
@@ -216,7 +215,7 @@ export function applyWorkflowCommand(
       const review = currentReview(state, command.cycle);
       const finding = getFinding(state, command.findingId);
       if (finding.state !== "fix_reported") throw new AppError("VALIDACAO", "O achado precisa de correção informada antes da validação");
-      if (state.executorIds.includes(actor.userId)) throw new AppError("SEM_PERMISSAO", "O executor não pode validar a própria correção");
+      if (!(actor.channel === "MCP" && actor.connectionId) && state.executorIds.includes(actor.userId)) throw new AppError("SEM_PERMISSAO", "O executor não pode validar a própria correção");
       finding.state = "validated";
       finding.validatedInCycle = review.cycle;
       finding.resolvedDeliveryRevision = state.deliveryRevision;
@@ -227,7 +226,7 @@ export function applyWorkflowCommand(
       const review = currentReview(state, command.cycle);
       requireText(command.reason, "Justificativa da dispensa");
       const finding = getFinding(state, command.findingId);
-      if (state.executorIds.includes(actor.userId)) throw new AppError("SEM_PERMISSAO", "O executor não pode dispensar achados da própria entrega");
+      if (!(actor.channel === "MCP" && actor.connectionId) && state.executorIds.includes(actor.userId)) throw new AppError("SEM_PERMISSAO", "O executor não pode dispensar achados da própria entrega");
       if (finding.state === "validated" || finding.state === "waived") throw new AppError("CONFLITO", "Achado já resolvido");
       finding.state = "waived";
       finding.validatedInCycle = review.cycle;
@@ -279,12 +278,11 @@ export function applyWorkflowCommand(
       if (withReservations && actor.channel !== "WEB") throw new AppError("SEM_PERMISSAO", "Aprovação com ressalvas exige decisão humana pelo painel");
       requirePermission(actor.canApprove);
       if (actor.channel !== "WEB" && actor.channel !== "MCP") throw new AppError("SEM_PERMISSAO", "Aprovação exige painel ou conexão MCP autorizada");
-      if (actor.channel === "MCP" && (!actor.connectionId || state.execution?.channel !== "MCP")) {
+      if (actor.channel === "MCP" && !actor.connectionId) {
         throw new AppError("SEM_PERMISSAO", "Aprovação MCP exige execução MCP vinculada e conexão autenticada");
       }
       const review = currentReview(state, command.cycle);
-      if (actor.channel === "MCP" && review.reviewMode !== "AGENT") throw new AppError("SEM_PERMISSAO", "Revisão MCP exige modo AGENT; adote somente revisão legada elegível, nunca uma revisão HUMAN explícita");
-      if (state.executorIds.includes(actor.userId)) throw new AppError("SEM_PERMISSAO", "O executor não pode aprovar a própria entrega");
+      if (!(actor.channel === "MCP" && actor.connectionId) && state.executorIds.includes(actor.userId)) throw new AppError("SEM_PERMISSAO", "O executor não pode aprovar a própria entrega");
       if (state.findings.some((finding) => finding.blocking &&
         (!(finding.state === "validated" || finding.state === "waived") || finding.resolvedDeliveryRevision !== state.deliveryRevision))) {
         throw new AppError("VALIDACAO", "Existem achados impeditivos não resolvidos");

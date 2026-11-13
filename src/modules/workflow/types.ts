@@ -70,6 +70,7 @@ export interface WorkflowState {
   executorIds: string[];
   reviews: WorkflowReview[];
   findings: WorkflowFinding[];
+  boardCompletion?: { approvedBy: string; approvedAt: string; channel: "WEB"; deliveryRevision: number };
   summary?: WorkflowSummary;
   execution?: WorkflowExecution;
 }

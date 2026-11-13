@@ -34,13 +34,13 @@ describe("autonomous MCP completion", () => {
     else state.reviews[0].checks[0].status = kind as "pending" | "failed";
     expect(() => run(state, { type: "approve_review", cycle: 1 }, { ...actor, channel: "WEB" })).toThrow(/verifica/i);
   });
-  it("rejects absent approval permission, LOCAL_SYNC, unlinked execution and human executor", () => {
+  it("rejects absent approval permission and LOCAL_SYNC; permits authenticated agent reviewing legacy human work", () => {
     expect(() => run(reviewing(), { type: "approve_review", cycle: 1 }, { ...actor, canApprove: false })).toThrow(/permissão/i);
     expect(() => run(reviewing(), { type: "approve_review", cycle: 1 }, { ...actor, channel: "LOCAL_SYNC" })).toThrow();
     const noRun = reviewing(); delete noRun.execution;
-    expect(() => run(noRun, { type: "approve_review", cycle: 1 })).toThrow(/execução/i);
+    expect(run(noRun, { type: "approve_review", cycle: 1 }).stage).toBe("DONE");
     const human = reviewing(); human.executorIds = ["user"];
-    expect(() => run(human, { type: "approve_review", cycle: 1 })).toThrow(/executor/i);
+    expect(run(human, { type: "approve_review", cycle: 1 }).stage).toBe("DONE");
   });
   it("corrects a failed review and blocking finding in a new execution on the same card", () => {
     let state = executing();

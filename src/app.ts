@@ -170,6 +170,7 @@ export function buildApp(deps: AppDeps = {}): FastifyInstance {
     authorizer = authorizer ?? new Authorizer(accessRepo);
     projectService =
       projectService ?? new ProjectService(new PrismaProjectRepo(db), accessRepo, auditRepo, engagementMemberRepo);
+    if (workflowEnabled) workflowStore = workflowStore ?? new PrismaWorkflowStore(db);
     taskService =
       taskService ??
       new TaskService(
@@ -179,6 +180,7 @@ export function buildApp(deps: AppDeps = {}): FastifyInstance {
         new PrismaIdempotencyStore(db),
         new PrismaActivityRepo(db),
         new PrismaCommentRepo(db),
+        workflowStore,
       );
     const memberRepo = new PrismaMemberRepo(db);
     memberService =

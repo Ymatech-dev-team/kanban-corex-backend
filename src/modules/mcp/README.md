@@ -82,13 +82,13 @@ Consulte tarefa e versão; execute e verifique; envie revisão com evidências r
 
 ## Revisão autônoma e retomada do legado
 
-`submit_for_review` aceita `reviewMode: AGENT` sem `reviewerId`: a execução MCP precisa pertencer à conta/conexão autenticada. Sem modo e sem reviewerId, MCP assume AGENT; chamadas antigas com reviewerId conservam HUMAN. Use AGENT explicitamente no fluxo autônomo. HUMAN é reservado à revisão humana solicitada e não pode ser aprovado pelo MCP.
+`submit_for_review` aceita `reviewMode: AGENT` sem `reviewerId`: a execução MCP precisa pertencer à conta autenticada (reconexão da mesma conta é aceita). Sem modo e sem reviewerId, MCP assume AGENT; chamadas antigas com reviewerId conservam HUMAN. Use AGENT explicitamente no fluxo autônomo. HUMAN preserva a origem histórica da revisão; um agente autenticado com permissão pode revisar e aprovar normalmente, sem aceite humano final.
 
-Para revisão antiga sem modo, `adopt_agent_review` exige tasks:approve/permissão atual, ciclo vigente, execução MCP da mesma conta e ausência de executores humanos. Registra adoção e cancela a solicitação REVIEW antiga na mesma transação; não aprova nem modifica checks/achados. Revisão HUMAN explícita não admite adoção. Após adoção, consultar o estado e continuar corrigindo até approve_review retornar DONE.
+Para revisão antiga sem modo, `adopt_agent_review` exige tasks:approve/permissão atual, ciclo vigente, execução MCP da mesma conta e ausência de executores humanos. Registra adoção e cancela a solicitação REVIEW antiga na mesma transação; não aprova nem modifica checks/achados. Revisão HUMAN explícita não admite adoção. A adoção é opcional para classificação histórica; approve_review aceita diretamente uma revisão atual HUMAN ou legada com checks e achados resolvidos.
 
 Respostas incluem `completionBlockers` e `suggestedTool`, além de versão/ciclo no estado. Essas sugestões não substituem autorização nem executam processos. Corrigir checks/achados, reexecutar e verificar de verdade; nunca transformar falha antiga/fora de escopo em passed. Não pedir aceite final para AGENT; solicitar ação humana somente por decisão ou acesso concreto fora do plano.
 
-Aprovação com ressalvas de checks reprovados é uma decisão humana exclusiva do painel (`approve_with_reservations`), não uma ferramenta MCP. O conector pode ler a decisão auditada, mas não pode fabricá-la; o fluxo autônomo continua exigindo verificações aprovadas e achados bloqueantes resolvidos.
+Aprovação com ressalvas de checks reprovados é uma decisão humana exclusiva do painel (`approve_with_reservations`), não uma ferramenta MCP. O conector pode ler a decisão auditada, mas não pode fabricá-la; a aprovação normal exige verificações aprovadas e achados resolvidos; approve_anyway permite concluir explicitamente com pendências.
 
 ## Aprovar mesmo assim (decisão explícita)
 

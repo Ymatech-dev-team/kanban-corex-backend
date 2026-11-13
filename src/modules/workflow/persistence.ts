@@ -11,7 +11,10 @@ export interface WorkflowAction {
 export interface ActionCursor { createdAt: string; id: string }
 export interface MonitoringCursor { updatedAt: string; taskId: string }
 export interface WorkflowMonitoringItem { taskId: string; title: string; clientName: string; projectName: string; updatedAt: Date | string; state: WorkflowState }
+export interface BoardMoveInput { status: "TODO" | "DOING" | "DONE"; position: number; expectedUpdatedAt?: string; operationId?: string }
+export interface BoardMoveActor extends WorkflowActor { canMove: boolean }
 export interface WorkflowStore {
+  moveBoard?(actor: BoardMoveActor, taskId: string, input: BoardMoveInput): Promise<WorkflowState | null>;
   listMonitoring?(orgId: string, userId: string, before?: MonitoringCursor, limit?: number): Promise<WorkflowMonitoringItem[]>;
   load(orgId: string, taskId: string): Promise<WorkflowState | null>;
   events(orgId: string, taskId: string, beforeVersion?: number, limit?: number): Promise<unknown[]>;

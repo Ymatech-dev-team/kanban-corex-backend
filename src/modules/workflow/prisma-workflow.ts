@@ -1,3 +1,5 @@
+import { applyBoardMove, boardStatus } from "./board-move.js";
+import type { BoardMoveActor, BoardMoveInput } from "./persistence.js";
 import { createHash, randomUUID } from "node:crypto";
 import { Prisma, type PrismaClient } from "@prisma/client";
 import { AppError } from "../../lib/errors.js";
@@ -8,8 +10,8 @@ import type { WorkflowActor, WorkflowState } from "./types.js";
 import type { ActionCursor, MonitoringCursor, WorkflowMonitoringItem, WorkflowAction, WorkflowStore, RequestActionInput, ResolveActionInput, CreateManagedTaskInput } from "./persistence.js";
 
 type Tx = Prisma.TransactionClient;
-type TaskRow = { id: string; status: string; projectId: string };
-type Operation = { commandDigest: string; result: { state: unknown } };
+type TaskRow = { id: string; status: string; projectId: string; updatedAt?: Date | string };
+type Operation = { commandDigest: string; result: { state: unknown; boardMovePermission?: "move" | "write" | "approve" } };
 
 /** JSON identity independent of object key ordering; only validated JSON inputs. */
 export function canonicalJson(value: unknown): string {
@@ -164,7 +166,7 @@ export class PrismaWorkflowStore implements WorkflowStore {
   }
 
   private async lockTask(tx: Tx, orgId: string, taskId: string): Promise<TaskRow> {
-    const tasks = await tx.$queryRaw<TaskRow[]>`SELECT t.id,t.status,t."projectId" FROM tasks t JOIN projects p ON p.id=t."projectId" AND p."orgId"=t."orgId" JOIN engagements e ON e.id=t."engagementId" WHERE t.id=${taskId} AND t."orgId"=${orgId} AND t."deletedAt" IS NULL AND p."deletedAt" IS NULL AND e."deletedAt" IS NULL FOR UPDATE OF t`;
+    const tasks = await tx.$queryRaw<TaskRow[]>`SELECT t.id,t.status,t."projectId",t."updatedAt" FROM tasks t JOIN projects p ON p.id=t."projectId" AND p."orgId"=t."orgId" JOIN engagements e ON e.id=t."engagementId" WHERE t.id=${taskId} AND t."orgId"=${orgId} AND t."deletedAt" IS NULL AND p."deletedAt" IS NULL AND e."deletedAt" IS NULL FOR UPDATE OF t`;
     if (!tasks[0]) throw new AppError("NAO_ENCONTRADO", "Tarefa não encontrada");
     return tasks[0];
   }
@@ -180,7 +182,7 @@ export class PrismaWorkflowStore implements WorkflowStore {
     return `${actor.channel.toLowerCase()}:${actor.userId}:${operationDigest(actor.connectionId)}`;
   }
 
-  private async replay(tx: Tx, actor: WorkflowActor, operationId: string, digest: string): Promise<WorkflowState | null> {
+  private async replay(tx: Tx, actor: WorkflowActor, operationId: string, digest: string, authorizeReplay?: (result: Operation["result"]) => void): Promise<WorkflowState | null> {
     const connection = this.connection(actor);
     // Serialize the operation key across different task rows too. Hash collisions only
     // over-serialize unrelated operations; uniqueness/digest checks remain authoritative.
@@ -188,6 +190,7 @@ export class PrismaWorkflowStore implements WorkflowStore {
     const rows = await tx.$queryRaw<Operation[]>`SELECT "commandDigest",result FROM workflow_operations WHERE "orgId"=${actor.orgId} AND "connectionId"=${connection} AND "operationId"=${operationId}`;
     if (!rows[0]) return null;
     if (rows[0].commandDigest !== digest) throw new AppError("CONFLITO", "Identificador de operação já utilizado com outro conteúdo");
+    authorizeReplay?.(rows[0].result);
     return workflowStateSchema.parse(rows[0].result.state);
   }
 
@@ -221,6 +224,36 @@ export class PrismaWorkflowStore implements WorkflowStore {
       await tx.$executeRaw`INSERT INTO task_workflows ("taskId","orgId",stage,version,"deliveryRevision",aggregate) VALUES (${taskId},${actor.orgId},${state.stage},${state.version},${state.deliveryRevision},${JSON.stringify(validated)}::jsonb)`;
       await this.commitEvent(tx, actor, input.operationId, digest, "initialize", 0, validated, { input: plan });
       return validated;
+    });
+  }
+
+  async moveBoard(actor: BoardMoveActor, taskId: string, input: BoardMoveInput): Promise<WorkflowState | null> {
+    if (!actor.canMove || actor.channel !== "WEB") throw new AppError("SEM_PERMISSAO", "Sem permissão para mover");
+    return this.db.$transaction(async tx => {
+      const task = await this.lockTask(tx, actor.orgId, taskId);
+      const rows = await tx.$queryRaw<Array<{ aggregate: unknown }>>`SELECT aggregate FROM task_workflows WHERE "taskId"=${taskId} AND "orgId"=${actor.orgId} FOR UPDATE`;
+      if (!rows[0]) return null;
+      const current = workflowStateSchema.parse(rows[0].aggregate);
+      if (!input.operationId || !/^[A-Za-z0-9_-]{1,128}$/.test(input.operationId) || !input.expectedUpdatedAt || !Number.isFinite(Date.parse(input.expectedUpdatedAt)) || !Number.isFinite(input.position)) throw new AppError("VALIDACAO", "Atualize o quadro antes de mover a tarefa");
+      const changed = boardStatus(current) !== input.status;
+      // Scope and effective permissions are checked even on idempotent retries.
+      if (input.status === "DONE" && !actor.canApprove && changed) throw new AppError("SEM_PERMISSAO", "Sem permissão para aprovar");
+      if (input.status !== "DONE" && !actor.canWrite && changed) throw new AppError("SEM_PERMISSAO", "Sem permissão para alterar etapa");
+      const digest = operationDigest({ taskId, tool: "board_move", input });
+      const replay = await this.replay(tx, actor, input.operationId, digest, result => {
+        if (result.boardMovePermission === "approve" && !actor.canApprove || result.boardMovePermission === "write" && !actor.canWrite) throw new AppError("SEM_PERMISSAO", "Sem permissão para repetir a movimentação");
+      });
+      if (replay) return replay;
+      if (!task.updatedAt || new Date(task.updatedAt).getTime() !== Date.parse(input.expectedUpdatedAt)) throw new AppError("CONFLITO", "A tarefa mudou; atualize o quadro antes de mover");
+      const state = workflowStateSchema.parse(applyBoardMove(current, actor, input.status, new Date().toISOString()));
+      await this.saveAggregate(tx, state, current.version);
+      await tx.$executeRaw`UPDATE tasks SET status=${input.status},position=${input.position},"updatedAt"=now() WHERE id=${taskId} AND "orgId"=${actor.orgId}`;
+      if (changed) {
+        const resolution = input.status === "DONE" ? "RESOLVED" : "CANCELLED";
+        await tx.$executeRaw`UPDATE task_action_requests SET state=${resolution},response=${"Movida pelo quadro"},"resolvedById"=${actor.userId},"resolvedAt"=now(),"updatedAt"=now(),version=version+1 WHERE "taskId"=${taskId} AND "orgId"=${actor.orgId} AND kind='REVIEW' AND state='OPEN'`;
+      }
+      await this.commitEvent(tx, actor, input.operationId, digest, "board_move", current.version, state, { from: boardStatus(current), to: input.status, position: input.position, ...(boardStatus(current) === "DONE" && changed ? { previousFindings: current.findings } : {}) }, { boardMovePermission: changed ? input.status === "DONE" ? "approve" : "write" : "move" });
+      return state;
     });
   }
 

@@ -70,6 +70,7 @@ export interface WorkflowState {
   executorIds: string[];
   reviews: WorkflowReview[];
   findings: WorkflowFinding[];
+  boardCompletion?: { approvedBy: string; approvedAt: string; channel: "WEB"; deliveryRevision: number };
   summary?: WorkflowSummary;
   execution?: WorkflowExecution;
 }
@@ -164,6 +165,7 @@ export const workflowStateSchema = z.object({
   taskId: id, orgId: id, version: z.number().int().nonnegative(), stage: z.enum(WORKFLOW_STAGES),
   deliveryRevision: z.number().int().positive(), responsibleId: id, criteria: z.array(text.max(2000)).max(100), context: z.string().max(8000), executorIds: z.array(id).max(1000),
   reviews: z.array(z.object({ cycle: z.number().int().positive(), deliveryRevision: z.number().int().positive(), reviewMode: z.enum(["AGENT", "HUMAN"]).optional(), submittedBy: id, submittedAt: z.string().datetime(), summary: text, evidence, checks: z.array(workflowCheckSchema).max(100), decision: z.enum(["pending", "changes_requested", "approved", "superseded"]), decidedBy: id.optional(), decidedAt: z.string().datetime().optional(), decidedChannel: z.enum(["WEB", "MCP", "LOCAL_SYNC"]).optional(), decidedAgent: id.optional(), reason: text.optional(), approvalOverride: z.object({ approvedBy: id, approvedAt: z.string().datetime(), channel: z.enum(["WEB", "MCP"]), cycle: z.number().int().positive(), deliveryRevision: z.number().int().positive() }).strict().optional(), reservation: z.object({ checkNames: z.array(id).min(1).max(100), reason: text.min(3), approvedBy: id, approvedAt: z.string().datetime(), cycle: z.number().int().positive(), deliveryRevision: z.number().int().positive() }).strict().optional() }).strict()).max(1000),
+  boardCompletion: z.object({ approvedBy: id, approvedAt: z.string().datetime(), channel: z.literal("WEB"), deliveryRevision: z.number().int().positive() }).strict().optional(),
   findings: z.array(z.object({ id, description: text, severity: z.enum(["low", "medium", "high", "critical"]), criterion: text.max(2000), responsibleId: id, blocking: z.boolean(), state: z.enum(["open", "fix_reported", "validated", "waived"]), openedInCycle: z.number().int().positive(), validatedInCycle: z.number().int().positive().optional(), resolvedDeliveryRevision: z.number().int().positive().optional(), fixEvidence: z.array(z.string().min(1).max(2000)).max(50), waiverReason: text.optional() }).strict()).max(1000),
   summary: summarySchema.extend({ updatedAt: z.string().datetime(), updatedBy: id, channel: z.enum(["WEB", "MCP", "LOCAL_SYNC"]) }).strict().optional(),
   execution: z.object({ id, agent: id, ownerId: id, channel: z.enum(["WEB", "MCP", "LOCAL_SYNC"]), connectionId: z.string().min(1).max(256).optional(), sessionReference: z.string().min(1).max(256).optional(), status: z.enum(["RUNNING", "WAITING", "PAUSED", "FINISHED"]), lastUpdatedAt: z.string().datetime() }).strict().optional(),

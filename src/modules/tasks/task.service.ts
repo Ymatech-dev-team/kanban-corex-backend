@@ -1,3 +1,4 @@
+import type { WorkflowStore } from "../workflow/persistence.js";
 import { randomUUID } from "node:crypto";
 import { AUDITABLE_FIELDS, PERMISSIONS, type TaskStatus } from "@sistema-tasks/contracts";
 import type { CreateTaskInput, UpdateTaskInput } from "@sistema-tasks/contracts";
@@ -75,6 +76,7 @@ export class TaskService {
     private readonly idempotency: IdempotencyStore,
     private readonly activity?: ActivityRepo,
     private readonly comments?: CommentRepo,
+    private readonly workflow?: WorkflowStore,
   ) {}
 
   /**
@@ -262,7 +264,7 @@ export class TaskService {
   }
 
   /** Mover no Kanban — erro discrimina "removida" (404) de "perdeu acesso" (403 → ejeta board). [JOR-1c] */
-  async move(session: SessionContext, id: string, status: TaskStatus, position: number): Promise<TaskRecord> {
+  async move(session: SessionContext, id: string, status: TaskStatus, position: number, expectedUpdatedAt?: string, operationId?: string): Promise<TaskRecord> {
     const task = await this.tasks.findById(id, session.orgId);
     if (!task) throw new AppError("TAREFA_REMOVIDA", "Essa tarefa foi removida");
     if (!session.permissions.has(PERMISSIONS.tarefas_mover)) {
@@ -273,6 +275,14 @@ export class TaskService {
       (await this.access.isMember(session.userId, task.projectId));
     if (!hasAccess) {
       throw new AppError("PROJETO_SEM_ACESSO", "Seu acesso a este cliente foi removido");
+    }
+    const managed = await this.workflow?.moveBoard?.({ orgId: session.orgId, userId: session.userId, channel: "WEB", canMove: true,
+      canWrite: session.permissions.has(PERMISSIONS.tarefas_editar), canReview: session.permissions.has(PERMISSIONS.tarefas_revisar),
+      canApprove: session.permissions.has(PERMISSIONS.tarefas_aprovar), canReopen: session.permissions.has(PERMISSIONS.tarefas_editar) }, id, { status, position, expectedUpdatedAt, operationId });
+    if (managed) {
+      const moved = await this.tasks.findById(id, session.orgId);
+      if (!moved) throw new AppError("TAREFA_REMOVIDA", "Essa tarefa foi removida");
+      return moved;
     }
     const moved = await this.tasks.move(id, status, position);
     if (status !== task.status) {

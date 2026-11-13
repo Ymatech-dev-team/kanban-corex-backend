@@ -159,7 +159,7 @@ export function makeTaskRoutes(authenticate: Authenticate, authz: Authorizer, se
       "/tasks/:id/move",
       { preHandler: authenticate, schema: { params: idParams, body: moveTaskSchema } },
       async (req) => {
-        const moved = await service.move(req.session!, req.params.id, req.body.status, req.body.position);
+        const moved = await service.move(req.session!, req.params.id, req.body.status, req.body.position, header(req, "x-expected-updated-at"), header(req, "idempotency-key"));
         return redactCost(moved, await canSeeCost(req, moved.projectId));
       },
     );

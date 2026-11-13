@@ -23,7 +23,7 @@ const text = z.string().trim().min(1).max(8000);
 const evidence = z.array(text.max(2000)).min(1).max(50);
 const operation = { taskId: id, operationId: z.string().min(1).max(256), expectedVersion: z.number().int().nonnegative() };
 const summary = z.object({ objective: text, completed: z.array(text.max(2000)).max(50), remaining: z.array(text.max(2000)).max(50), nextStep: text, blockers: z.array(text.max(2000)).max(50), references: z.array(text.max(2000)).max(50) }).strict();
-function confirmed(state: Pick<WorkflowState, "taskId" | "version" | "stage"> & Partial<WorkflowState>, userId?: string, canApprove = false) {
+function confirmed(state: Pick<WorkflowState, "taskId" | "version" | "stage"> & Partial<WorkflowState>, _userId?: string, canApprove = false) {
   const review = state.reviews?.at(-1);
   const completionBlockers: Array<{ kind: string; id: string; status: string }> = [];
   if (review) {
@@ -38,16 +38,12 @@ function confirmed(state: Pick<WorkflowState, "taskId" | "version" | "stage"> & 
   }
   const overrideAvailable = canApprove && state.stage === "IN_REVIEW" && review?.decision === "pending" && review.deliveryRevision === state.deliveryRevision;
   const suggestedTool = state.stage === "DONE" ? "get_task_timeline"
-    : overrideAvailable && review?.reviewMode !== "AGENT" ? "approve_anyway"
-    : state.stage === "IN_REVIEW" && review?.reviewMode === "HUMAN" ? null
-    : state.stage === "IN_REVIEW" && review && !review.reviewMode && state.execution?.channel === "MCP" && state.execution.ownerId === userId && !state.executorIds?.length ? "adopt_agent_review"
-    : state.stage === "IN_REVIEW" && review?.reviewMode !== "AGENT" ? null
     : state.stage === "IN_REVIEW" ? completionBlockers.some(b => b.kind === "CHECK" || b.status !== "fix_reported") ? "request_changes"
       : completionBlockers.length ? "record_technical_review" : review ? "approve_review" : "get_task"
     : state.stage === "CHANGES_REQUESTED" || state.stage === "READY" ? "start_execution" : "get_task";
   return { state, status: state.stage, taskId: state.taskId, url: `/tarefas/${encodeURIComponent(state.taskId)}`, version: state.version,
     completionBlockers, approvalOverrideAvailable: overrideAvailable, approvalOverrideTool: overrideAvailable ? "approve_anyway" : null, suggestedTool, reviewMode: review?.reviewMode ?? "UNCLASSIFIED",
-    nextAllowedStep: overrideAvailable ? "REVIEW_OR_APPROVE_ANYWAY" : state.stage === "IN_REVIEW" && review?.reviewMode === "HUMAN" ? "HUMAN_REVIEW" : state.stage === "IN_REVIEW" && review && !review.reviewMode ? "CLASSIFY_LEGACY_REVIEW" : state.stage === "IN_REVIEW" ? "REVIEW_AND_RESOLVE_CHECKS" : state.stage === "DONE" ? "VIEW_COMPLETED_TASK" : "CONSULT_CURRENT_TASK_BEFORE_MUTATION" };
+    nextAllowedStep: overrideAvailable ? "REVIEW_OR_APPROVE_ANYWAY" : state.stage === "IN_REVIEW" ? "REVIEW_AND_RESOLVE_CHECKS" : state.stage === "DONE" ? "VIEW_COMPLETED_TASK" : "CONSULT_CURRENT_TASK_BEFORE_MUTATION" };
 }
 function taskDto<T extends { id: string; status: string; projectId: string; engagementId?: string; estimatedMinutes: number | null }>(task: T, workflow: { stage: string } | null = null) {
   const { projectId: clientId, engagementId: projectId, ...rest } = redactCost(task, false);
@@ -133,7 +129,7 @@ export function createCorexMcpTools(options: CorexMcpToolsOptions): McpToolDefin
     { name: "request_changes", type: "request_changes", fields: { cycle: z.number().int().positive(), reason: text }, description: "Solicita ajustes na revisão atual da mesma tarefa. Corrija os erros, rode os checks novamente e envie outra revisão; preserve os achados e seus IDs. Se a execução terminou, use start_execution com novo executionId." },
     { name: "adopt_agent_review", type: "adopt_agent_review", fields: { cycle: z.number().int().positive() }, description: "Assume revisão legada sem modo explícito, com execução MCP comprovada da conta e nenhum executor humano. Exige tasks:approve; preserva ciclo/checks/achados e registra evento. Cancela somente solicitação humana REVIEW antiga. Não aprova nem toma revisão explicitamente HUMAN." },
     { name: "approve_anyway", type: "approve_anyway", fields: { cycle: z.number().int().positive() }, description: "Aprova mesmo assim e conclui a revisão atual, inclusive HUMAN ou legada, sem justificativa nem seleção. Aceita checks falhos, pendentes ou ausentes e achados bloqueantes sem alterá-los. Registra decisão explícita e autor no histórico. Exige tasks:approve e permissão atual; consulte a entrega e revise os resultados antes de concluir. Não representa aceite humano nem prova que checks passaram." },
-    { name: "approve_review", type: "approve_review", fields: { cycle: z.number().int().positive() }, description: "Aprova a revisão atual e conclui uma entrega executada por agente. Exige consentimento tasks:approve, permissão atual de aprovação, quatro checks aprovados e nenhum achado bloqueante pendente. Para aceitar pendências explicitamente após revisar a entrega, use approve_anyway; para corrigi-las, solicite ajustes, verifique e reenvie na mesma tarefa. Não representa aceite humano." },
+    { name: "approve_review", type: "approve_review", fields: { cycle: z.number().int().positive() }, description: "Revisa e aprova a entrega atual autonomamente, inclusive revisões HUMAN ou legadas, sem exigir aceite humano final. Exige consentimento tasks:approve, permissão atual de aprovação, quatro checks aprovados e nenhum achado bloqueante pendente. Para aceitar pendências explicitamente após revisar a entrega, use approve_anyway; para corrigi-las, solicite ajustes, verifique e reenvie na mesma tarefa. Não representa aceite humano." },
     { name: "record_delivery_evidence", type: "record_evidence", fields: { summary: text, evidence }, description: "Anexa resumo e evidências de smoke, deploy ou merge ao histórico, inclusive após FINISHED ou DONE. Não altera checks, aprovação ou escopo e não reabre a tarefa. Registre somente ações realmente verificadas; esta ferramenta não autoriza executar deploy ou merge." },
     { name: "record_review_findings", type: "record_finding", fields: { id, description: text, severity: z.enum(["low","medium","high","critical"]), criterion: text.max(2000), responsibleId: id, blocking: z.boolean() }, description: "Adiciona um achado estável à revisão existente. Nunca cria outro card." },
     { name: "report_finding_fix", type: "report_fix", fields: { findingId: id, evidence }, description: "Informa correção e evidência para achado existente, sem autoaceite." },
