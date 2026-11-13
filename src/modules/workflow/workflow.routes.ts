@@ -62,6 +62,24 @@ export function makeWorkflowRoutes(authenticate: Authenticate, authz: Authorizer
       const nextCursor = rows.length > req.query.limit && last ? Buffer.from(JSON.stringify({ updatedAt: new Date(last.updatedAt).toISOString(), taskId: last.taskId })).toString("base64url") : null;
       return { items, nextCursor };
     });
+    r.get("/tasks/workflows/team", { preHandler, schema: { querystring: actionQuery } }, async (req) => {
+      await authz.assertCan(req.session!, PERMISSIONS.tarefas_ver_globais);
+      if (!repository.listTeamMonitoring) throw new AppError("NAO_ENCONTRADO", "Acompanhamento indisponível");
+      let cursor: { updatedAt: string; taskId: string } | undefined;
+      if (req.query.cursor) {
+        try { cursor = z.object({ updatedAt: z.string().datetime(), taskId: z.string().min(1).max(128) }).strict().parse(JSON.parse(Buffer.from(req.query.cursor, "base64url").toString())); }
+        catch { throw new AppError("VALIDACAO", "Cursor inválido"); }
+      }
+      const rows = await repository.listTeamMonitoring(req.session!.orgId, req.session!.userId, new Date(), cursor, req.query.limit + 1);
+      const items = [];
+      for (const row of rows.slice(0, req.query.limit)) {
+        try { await actorFor(req, row.taskId); items.push(row); }
+        catch (error) { if (!(error instanceof AppError && error.code === "NAO_ENCONTRADO")) throw error; }
+      }
+      const last = rows[Math.min(rows.length, req.query.limit) - 1];
+      const nextCursor = rows.length > req.query.limit && last ? Buffer.from(JSON.stringify({ updatedAt: new Date(last.updatedAt).toISOString(), taskId: last.taskId })).toString("base64url") : null;
+      return { items, nextCursor };
+    });
     r.get("/tasks/:id/workflow", { preHandler, schema: { params, querystring: eventQuery } }, async (req) => {
       const actor = await actorFor(req, req.params.id);
       const state = await repository.load(actor.orgId, req.params.id);

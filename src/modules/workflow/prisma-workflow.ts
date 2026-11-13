@@ -2,6 +2,7 @@ import { applyBoardMove, boardStatus } from "./board-move.js";
 import type { BoardMoveActor, BoardMoveInput } from "./persistence.js";
 import { createHash, randomUUID } from "node:crypto";
 import { Prisma, type PrismaClient } from "@prisma/client";
+import type { WorkflowTeamItem } from "@sistema-tasks/contracts";
 import { AppError } from "../../lib/errors.js";
 import { normalizeExecutorProvenance } from "./executor-provenance.js";
 import { applyWorkflowCommand, createWorkflow } from "./workflow.js";
@@ -22,6 +23,13 @@ export function canonicalJson(value: unknown): string {
   return JSON.stringify(value);
 }
 export const operationDigest = (value: unknown) => createHash("sha256").update(canonicalJson(value)).digest("hex");
+
+const BRT_OFFSET_MS = 3 * 3_600_000;
+const DAY_MS = 86_400_000;
+/** 00:00 America/Sao_Paulo (UTC-3 fixo, sem horário de verão) do dia BRT que contém `now`. Puro. */
+export function startOfDayBRT(now: Date): Date {
+  return new Date(Math.floor((now.getTime() - BRT_OFFSET_MS) / DAY_MS) * DAY_MS + BRT_OFFSET_MS);
+}
 
 export class PrismaWorkflowStore implements WorkflowStore {
   constructor(private readonly db: PrismaClient) {}
@@ -163,6 +171,31 @@ export class PrismaWorkflowStore implements WorkflowStore {
       ${before ? Prisma.sql`AND (w."updatedAt",t.id)<(${new Date(before.updatedAt)},${before.taskId})` : Prisma.empty}
       ORDER BY w."updatedAt" DESC,t.id DESC LIMIT ${limit}`);
     return Promise.all(rows.map(async ({ aggregate, ...row }) => ({ ...row, state: await this.normalizeExecutors(this.db, workflowStateSchema.parse(aggregate)) })));
+  }
+
+  async listTeamMonitoring(orgId: string, userId: string, now: Date, before?: MonitoringCursor, limit = 51): Promise<WorkflowTeamItem[]> {
+    const startOfDay = startOfDayBRT(now);
+    const rows = await this.db.$queryRaw<Array<Omit<WorkflowTeamItem, "state" | "updatedAt"> & { updatedAt: Date | string; aggregate: unknown }>>(Prisma.sql`
+      SELECT t.id AS "taskId",t.title,p.id AS "clientId",p.name AS "clientName",e.id AS "projectId",e.name AS "projectName",
+        ru.name AS "responsibleName",au.name AS "assigneeName",w."updatedAt",w.aggregate
+      FROM task_workflows w JOIN tasks t ON t.id=w."taskId" AND t."orgId"=w."orgId"
+      JOIN projects p ON p.id=t."projectId" AND p."orgId"=t."orgId"
+      JOIN engagements e ON e.id=t."engagementId" AND e."orgId"=t."orgId" AND e."projectId"=t."projectId"
+      JOIN users u ON u.id=${userId} AND u."orgId"=w."orgId"
+      LEFT JOIN roles r ON r.id=u."roleId" AND r."orgId"=u."orgId"
+      LEFT JOIN users ru ON ru.id=w.aggregate->>'responsibleId' AND ru."orgId"=w."orgId"
+      LEFT JOIN users au ON au.id=t."assigneeId" AND au."orgId"=t."orgId"
+      WHERE w."orgId"=${orgId} AND t."deletedAt" IS NULL AND p."deletedAt" IS NULL AND e."deletedAt" IS NULL AND u."deletedAt" IS NULL
+      AND ('projetos.acessar_todos'=ANY(u."extraPermissions") OR 'projetos.acessar_todos'=ANY(r.permissions)
+        OR EXISTS(SELECT 1 FROM project_members m WHERE m."projectId"=t."projectId" AND m."userId"=u.id))
+      AND (w.stage <> 'DONE' OR w."updatedAt" >= ${startOfDay})
+      ${before ? Prisma.sql`AND (w."updatedAt",t.id)<(${new Date(before.updatedAt)},${before.taskId})` : Prisma.empty}
+      ORDER BY w."updatedAt" DESC,t.id DESC LIMIT ${limit}`);
+    return Promise.all(rows.map(async ({ aggregate, updatedAt, ...row }) => ({
+      ...row,
+      updatedAt: new Date(updatedAt).toISOString(),
+      state: await this.normalizeExecutors(this.db, workflowStateSchema.parse(aggregate)),
+    })));
   }
 
   private async lockTask(tx: Tx, orgId: string, taskId: string): Promise<TaskRow> {

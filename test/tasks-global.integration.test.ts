@@ -44,10 +44,10 @@ beforeAll(async () => {
   access.grant(P1, "u1"); access.grant(P2, "u1"); access.grant(P1, "boss"); access.grant(P1, "nope");
 
   const taskRepo = new InMemoryTaskRepo();
-  const mk = async (key: string, p: { projectId: string; engagementId: string; orgId?: string; status?: "TODO" | "DOING" | "DONE"; priority?: "LOW" | "MEDIUM" | "HIGH"; dueDate?: Date | null; assigneeId?: string | null; estimatedMinutes?: number | null }) => {
+  const mk = async (key: string, p: { title?: string; projectId: string; engagementId: string; orgId?: string; status?: "TODO" | "DOING" | "DONE"; priority?: "LOW" | "MEDIUM" | "HIGH"; dueDate?: Date | null; assigneeId?: string | null; estimatedMinutes?: number | null }) => {
     const rec = await taskRepo.create({
       orgId: p.orgId ?? "o1", projectId: p.projectId, engagementId: p.engagementId,
-      title: key, status: p.status ?? "TODO", priority: p.priority ?? "MEDIUM",
+      title: p.title ?? key, status: p.status ?? "TODO", priority: p.priority ?? "MEDIUM",
       dueDate: p.dueDate ?? null, assigneeId: p.assigneeId ?? null,
       estimatedMinutes: p.estimatedMinutes ?? null, position: 1, createdById: "u1",
     });
@@ -61,6 +61,14 @@ beforeAll(async () => {
   await mk("d", { projectId: P3, engagementId: "e3", status: "TODO", assigneeId: "u1" }); // P3: u1 sem acesso
   await mk("x", { projectId: "cli-o2", engagementId: "eo2", orgId: "o2", status: "TODO", assigneeId: "u1" }); // outro org
   await taskRepo.addExtraAssignee(ids["c"], "u2", "o1"); // u2 é EXTRA na tarefa c
+  // Fixtures da busca por título (q) [produto-telas RB4]
+  const rbase = { status: "TODO" as const, priority: "MEDIUM" as const };
+  await mk("r1", { ...rbase, projectId: P1, engagementId: "e1", title: "Relatório Mensal", dueDate: new Date(iso(2026, 9, 5)) });
+  await mk("r2", { ...rbase, projectId: P2, engagementId: "e2", title: "relatório anual", dueDate: new Date(iso(2026, 9, 25)) });
+  await mk("r3", { ...rbase, projectId: P3, engagementId: "e3", title: "RELATÓRIO secreto" }); // P3: u1 sem acesso
+  await mk("r4", { ...rbase, projectId: "cli-o2", engagementId: "eo2", orgId: "o2", title: "Relatório de outro org" });
+  await mk("r5", { projectId: P3, engagementId: "e3", status: "DONE", title: "Relatório concluído" }); // DONE em P3: só "super" enxerga
+  await mk("r6", { ...rbase, projectId: P1, engagementId: "e1", title: "Revisar contrato 100% _final_" });
 
   const taskService = new TaskService(taskRepo, new InMemorySubtaskRepo(), access, new InMemoryIdempotencyStore());
   app = buildApp({ authenticate: makeAuthenticate({ tokens, users }), authorizer: new Authorizer(access), taskService, tokenService: tokens });
@@ -140,5 +148,82 @@ describe("GET /tasks — visão global", () => {
     expect(asU1.estimatedMinutes).toBeNull();
     const asBoss = (await get("/tasks", "boss")).json().tasks.find((t: { id: string }) => t.id === ids["a"]);
     expect(asBoss.estimatedMinutes).toBe(60);
+  });
+});
+
+describe("GET /tasks?q= — busca por título [produto-telas RB4]", () => {
+  const q = (text: string, extra = "") => `/tasks?q=${encodeURIComponent(text)}${extra}`;
+
+  it("filtra por título sem diferenciar maiúsculas/minúsculas e acentos preservados", async () => {
+    for (const term of ["relatório", "RELATÓRIO", "ReLaTóRiO"]) {
+      const res = await get(q(term), "u1");
+      expect(res.statusCode).toBe(200);
+      expect(idsOf(res).sort()).toEqual([ids["r1"], ids["r2"]].sort());
+    }
+  });
+
+  it("casa por trecho no meio do título", async () => {
+    expect(idsOf(await get(q("MENS"), "u1"))).toEqual([ids["r1"]]);
+  });
+
+  it("trim: espaços nas pontas são ignorados", async () => {
+    expect(idsOf(await get(q("  mensal "), "u1"))).toEqual([ids["r1"]]);
+  });
+
+  it("sem q o comportamento é o de antes (não filtra por título)", async () => {
+    const got = idsOf(await get("/tasks", "u1"));
+    expect(got).toEqual(expect.arrayContaining([ids["a"], ids["c"], ids["e"], ids["r1"], ids["r2"]]));
+  });
+
+  it("AND com cliente (projectId) e projeto (engagementId)", async () => {
+    expect(idsOf(await get(q("relatório", `&projectId=${P2}`), "u1"))).toEqual([ids["r2"]]);
+    expect(idsOf(await get(q("relatório", "&engagementId=e1"), "u1"))).toEqual([ids["r1"]]);
+    expect(idsOf(await get(q("relatório", `&projectId=${P2}&engagementId=e1`), "u1"))).toEqual([]);
+  });
+
+  it("AND com prazo (dueFrom/dueTo)", async () => {
+    const upto = await get(q("relatório", `&dueTo=${encodeURIComponent(iso(2026, 9, 15))}`), "u1");
+    expect(idsOf(upto)).toEqual([ids["r1"]]);
+    const from = await get(q("relatório", `&dueFrom=${encodeURIComponent(iso(2026, 9, 15))}`), "u1");
+    expect(idsOf(from)).toEqual([ids["r2"]]);
+  });
+
+  it("AND com status/includeDone: DONE segue oculto por padrão e volta com includeDone", async () => {
+    expect(idsOf(await get(q("relatório"), "super"))).not.toContain(ids["r5"]);
+    expect(idsOf(await get(q("relatório", "&includeDone=true"), "super"))).toContain(ids["r5"]);
+    expect(idsOf(await get(q("relatório", "&status=DONE"), "super"))).toEqual([ids["r5"]]);
+  });
+
+  it("escopo de acesso vem antes: u1 não acha título de P3 nem de outro org", async () => {
+    expect(idsOf(await get(q("secreto"), "u1"))).toEqual([]);
+    expect(idsOf(await get(q("outro org"), "u1"))).toEqual([]);
+  });
+
+  it("tenant: super (acessar_todos) acha P3 do próprio org e nunca o org o2", async () => {
+    const got = idsOf(await get(q("relatório"), "super"));
+    expect(got).toContain(ids["r3"]);
+    expect(got).not.toContain(ids["r4"]);
+  });
+
+  it("[repo em memória] curingas % e _ são literais (não prova o escape do Prisma/Postgres)", async () => {
+    expect(idsOf(await get(q("%"), "u1"))).toEqual([ids["r6"]]); // só quem tem "%" no título
+    expect(idsOf(await get(q("_final_"), "u1"))).toEqual([ids["r6"]]);
+    expect(idsOf(await get(q("r_l"), "u1"))).toEqual([]); // _ não é "qualquer caractere"
+  });
+
+  it("q vazio ou só espaços → 400 (o front nunca envia vazio)", async () => {
+    expect((await get("/tasks?q=", "u1")).statusCode).toBe(400);
+    expect((await get(q("   "), "u1")).statusCode).toBe(400);
+  });
+
+  it("limite: 100 caracteres → 200; 101 → 400", async () => {
+    expect((await get(q("x".repeat(100)), "u1")).statusCode).toBe(200);
+    expect((await get(q("x".repeat(101)), "u1")).statusCode).toBe(400);
+  });
+
+  it("limit continua valendo com q (hasMore)", async () => {
+    const b = (await get(q("relatório", "&limit=1"), "u1")).json() as { tasks: { id: string }[]; hasMore: boolean };
+    expect(b.tasks.map((t) => t.id)).toEqual([ids["r1"]]); // r1 vence antes de r2
+    expect(b.hasMore).toBe(true);
   });
 });

@@ -165,6 +165,8 @@ export class PrismaTaskRepo implements TaskRepo {
     if (f.assigneeId) {
       and.push({ OR: [{ assigneeId: f.assigneeId }, { extraAssignees: { some: { userId: f.assigneeId } } }] });
     }
+    // Busca por título: valor parametrizado pelo Prisma, AND com escopo/filtros. Escape de curingas (% e _) no Postgres a confirmar em dev real; impacto só de relevância, escopo e orgId seguem em AND. [produto-telas RB4]
+    if (f.q) and.push({ title: { contains: f.q, mode: "insensitive" } });
     // Cursor only adds ordering predicates; it cannot replace tenant or access filters.
     // Dated rows precede NULL due dates, and id breaks ties deterministically.
     if (f.cursor) {

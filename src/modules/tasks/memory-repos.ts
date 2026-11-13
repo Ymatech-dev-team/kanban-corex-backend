@@ -97,6 +97,7 @@ export class InMemoryTaskRepo implements TaskRepo {
     return sortAndPage(applyFilters(list, mineFilter), mineFilter).map(clone);
   }
   async listAll(scope: string[] | "all", orgId: string, f: TaskFilterOpts): Promise<ListAllResult> {
+    const needle = f.q?.toLowerCase();
     const from = f.dueFrom ? new Date(f.dueFrom).getTime() : null;
     const to = f.dueTo ? new Date(f.dueTo).getTime() : null;
     const list = [...this.byId.values()].filter((t) => {
@@ -104,6 +105,7 @@ export class InMemoryTaskRepo implements TaskRepo {
       if (scope !== "all" && !scope.includes(t.projectId)) return false; // escopo acessível [RF-A4]
       if (f.projectId && t.projectId !== f.projectId) return false; // Cliente (intersecta)
       if (f.engagementId && t.engagementId !== f.engagementId) return false; // Projeto
+      if (needle && !t.title.toLowerCase().includes(needle)) return false; // busca por título [produto-telas RB4]
       if (f.priority && t.priority !== f.priority) return false;
       if (f.assigneeId && !(t.assigneeId === f.assigneeId || t.extraAssigneeIds.includes(f.assigneeId))) return false;
       if (f.status) {
