@@ -19,6 +19,7 @@ const TOOL_POLICIES = new Map<string, ToolPolicy>([
   ...["start_execution", "report_progress", "request_user_action", "submit_for_review", "record_delivery_evidence"].map((name): [string, ToolPolicy] => [name, { scope: "tasks:update", permission: PERMISSIONS.tarefas_editar, project: true }]),
   ...["record_review_findings", "record_technical_review", "request_changes"].map((name): [string, ToolPolicy] => [name, { scope: "tasks:update", permission: PERMISSIONS.tarefas_revisar, project: true }]),
   ["adopt_agent_review", { scope: "tasks:approve", permission: PERMISSIONS.tarefas_aprovar, project: true }],
+  ["approve_anyway", { scope: "tasks:approve", permission: PERMISSIONS.tarefas_aprovar, project: true }],
   ["approve_review", { scope: "tasks:approve", permission: PERMISSIONS.tarefas_aprovar, project: true }],
   ["create_task", { scope: "tasks:create", permission: PERMISSIONS.tarefas_criar, project: true }],
   ["update_task", { scope: "tasks:update", permission: PERMISSIONS.tarefas_editar, project: true }],

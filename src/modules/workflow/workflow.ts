@@ -257,6 +257,22 @@ export function applyWorkflowCommand(
       review.reviewMode = "AGENT";
       break;
     }
+    case "approve_anyway": {
+      requirePermission(actor.canApprove);
+      if ((actor.channel !== "WEB" && actor.channel !== "MCP") || (actor.channel === "MCP" && !actor.connectionId)) {
+        throw new AppError("SEM_PERMISSAO", "Aprovação exige painel ou conexão MCP autenticada");
+      }
+      const review = currentReview(state, command.cycle);
+      review.approvalOverride = { approvedBy: actor.userId, approvedAt: at, channel: actor.channel, cycle: review.cycle, deliveryRevision: state.deliveryRevision };
+      review.decision = "approved";
+      review.decidedBy = actor.userId;
+      review.decidedAt = at;
+      review.decidedChannel = actor.channel;
+      if (actor.channel === "MCP") review.decidedAgent = state.execution?.ownerId === actor.userId && state.execution.connectionId === actor.connectionId ? state.execution.agent : "Assistente conectado";
+      if (state.execution) { state.execution.status = "FINISHED"; state.execution.lastUpdatedAt = at; }
+      state.stage = "DONE";
+      break;
+    }
     case "approve_with_reservations":
     case "approve_review": {
       const withReservations = command.type === "approve_with_reservations";

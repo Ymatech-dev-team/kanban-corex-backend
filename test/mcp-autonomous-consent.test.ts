@@ -6,7 +6,7 @@ describe("autonomous completion consent",()=>{
  it("clearly explains delegated completion only when requested",()=>{
   const page=(scopes:string[])=>renderConsent({clientId:"Claude or Codex",scopes,csrf:"test",nonce:"test"});
   expect(page(["tasks:approve"])).toContain("Aprovar revisões e concluir tarefas");
-  expect(page(["tasks:approve"])).toContain("checks");
+  expect(page(["tasks:approve"])).toContain("checks falhos, pendentes ou ausentes e achados bloqueantes");
   expect(page(["tasks:update"])).toContain("não permite concluir tarefas");
   expect(page(["tasks:update"])).not.toContain("Aprovar revisões e concluir tarefas");
  });

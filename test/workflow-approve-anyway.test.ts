@@ -1,0 +1,17 @@
+import { describe, expect, it } from 'vitest';
+import { applyWorkflowCommand, createWorkflow } from '../src/modules/workflow/workflow.js';
+import { commandSchema, workflowStateSchema } from '../src/modules/workflow/schemas.js';
+import type { WorkflowActor, WorkflowCommand, WorkflowState } from '../src/modules/workflow/types.js';
+const at='2026-11-12T23:00:00.000Z';
+const actor:WorkflowActor={orgId:'org',userId:'user',channel:'MCP',connectionId:'grant',canWrite:false,canReview:false,canApprove:true,canReopen:true};
+const command={type:'approve_anyway',cycle:1} as WorkflowCommand;
+function reviewing():WorkflowState {return {...createWorkflow({taskId:'task',orgId:'org',responsibleId:'user',criteria:['works'],context:'plan'}),stage:'IN_REVIEW',version:4,executorIds:['user'],reviews:[{cycle:1,deliveryRevision:1,reviewMode:'HUMAN',submittedBy:'user',submittedAt:at,summary:'done',evidence:['logs'],checks:[{name:'lint',status:'failed',required:true},{name:'test',status:'pending',required:true}],decision:'pending'}],findings:[{id:'f',description:'block',severity:'critical',criterion:'works',responsibleId:'user',blocking:true,state:'open',openedInCycle:1,fixEvidence:[]}]};}
+const run=(state=reviewing(),who=actor,cmd=command)=>applyWorkflowCommand(state,who,cmd,state.version,at);
+describe('explicit approve anyway',()=>{
+ it.each(['WEB','MCP'] as const)('completes through %s preserving failed/pending/missing checks and blocking findings',channel=>{const before=reviewing();const result=run(before,{...actor,channel});expect(result.state.stage).toBe('DONE');expect(result.state.reviews[0]).toMatchObject({decision:'approved',decidedBy:'user',decidedChannel:channel,approvalOverride:{approvedBy:'user',approvedAt:at,channel,cycle:1,deliveryRevision:1}});expect(result.state.reviews[0].checks).toEqual(before.reviews[0].checks);expect(result.state.findings).toEqual(before.findings);expect(result.event.type).toBe('approve_anyway');expect(before.stage).toBe('IN_REVIEW');expect(workflowStateSchema.safeParse(result.state).success).toBe(true);});
+ it('supports unclassified review without changing its mode or requiring another executor',()=>{const state=reviewing();delete state.reviews[0].reviewMode;const done=run(state).state;expect(done.reviews[0].reviewMode).toBeUndefined();expect(done.reviews[0].decidedAgent).toBe('Assistente conectado');});
+ it('requires permission, authenticated channel and tenant even for executor',()=>{for(const who of [{...actor,canApprove:false},{...actor,channel:'LOCAL_SYNC' as const},{...actor,connectionId:undefined},{...actor,orgId:'other'}])expect(()=>run(reviewing(),who)).toThrow();});
+ it('retains version, cycle, active review and delivery protections',()=>{expect(()=>applyWorkflowCommand(reviewing(),actor,command,3,at)).toThrow();expect(()=>run(reviewing(),actor,{type:'approve_anyway',cycle:2} as WorkflowCommand)).toThrow();const stale=reviewing();stale.deliveryRevision=2;expect(()=>run(stale)).toThrow();const done=run().state;expect(()=>run(done)).toThrow();});
+ it('requires only cycle and rejects forged audit or reasons',()=>{expect(commandSchema.safeParse(command).success).toBe(true);for(const extra of [{reason:'made up'},{approvedBy:'other'},{channel:'WEB'}])expect(commandSchema.safeParse({...command,...extra}).success).toBe(false);});
+ it('preserves ordinary approval checks',()=>{expect(()=>run(reviewing(),{...actor,channel:'WEB',userId:'reviewer'},{type:'approve_review',cycle:1})).toThrow(/achados/);});
+});

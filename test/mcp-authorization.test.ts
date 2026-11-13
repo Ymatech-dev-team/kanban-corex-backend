@@ -28,7 +28,7 @@ beforeEach(() => {
 });
 
 describe("MCP authorization boundary", () => {
-  it.each(["approve_review", "adopt_agent_review"])("requires explicit approval consent in token and grant for %s", async (tool) => {
+  it.each(["approve_review", "adopt_agent_review", "approve_anyway"])("requires explicit approval consent in token and grant for %s", async (tool) => {
     users.findById.mockResolvedValue({ ...user(), rolePermissions: [PERMISSIONS.tarefas_aprovar] });
     await expect(boundary().authorize("token", tool, "project")).rejects.toMatchObject({code:"SEM_PERMISSAO",message:expect.stringMatching(/reconecte.*tasks:approve/i)});
     verifier.verifyAccessToken.mockResolvedValue({ ...claims(), scopes:[...claims().scopes,"tasks:approve"] });
@@ -38,7 +38,7 @@ describe("MCP authorization boundary", () => {
     verifier.verifyAccessToken.mockResolvedValue(claims());
     await expect(boundary().authorize("token", tool, "project")).rejects.toMatchObject({code:"SEM_PERMISSAO",message:expect.stringMatching(/reconecte.*tasks:approve/i)});
   });
-  it.each(["approve_review", "adopt_agent_review"])("rechecks account permission, tenant and membership for %s", async (tool) => {
+  it.each(["approve_review", "adopt_agent_review", "approve_anyway"])("rechecks account permission, tenant and membership for %s", async (tool) => {
     verifier.verifyAccessToken.mockResolvedValue({...claims(),scopes:["tasks:approve"]});
     grants.findById.mockResolvedValue({...grant(),scopes:["tasks:approve"]});
     await expect(boundary().authorize("token",tool,"project")).rejects.toMatchObject({code:"SEM_PERMISSAO"});

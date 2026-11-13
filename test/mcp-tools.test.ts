@@ -20,18 +20,18 @@ describe('Corex MCP authorized tool adapters',()=>{
  it('routes legacy adoption with scoped authorization',async()=>{const s=setup();s.ctx.session.permissions.add(PERMISSIONS.tarefas_aprovar);await s.call('adopt_agent_review',{taskId:'task',operationId:'adopt',expectedVersion:2,cycle:1});expect(s.authorization.authorize).toHaveBeenLastCalledWith('opaque','adopt_agent_review','canonical-project');expect(s.workflow.execute).toHaveBeenLastCalledWith(expect.objectContaining({canApprove:true}),'task',expect.objectContaining({command:{type:'adopt_agent_review',cycle:1}}));});
  it('reports structured check blockers without asking for final human acceptance',async()=>{const s=setup();s.workflow.load.mockResolvedValue({taskId:'task',version:3,stage:'IN_REVIEW',reviews:[{reviewMode:'AGENT',checks:[{name:'lint',status:'failed',required:true}]}],findings:[]});const out=await s.call('get_task',{taskId:'task'});expect(out).toMatchObject({suggestedTool:'request_changes',completionBlockers:expect.arrayContaining([{kind:'CHECK',id:'lint',status:'failed'}])});});
 
- it('does not write when approval consent is missing and preserves reconnection guidance',async()=>{
+ it.each(['approve_review','approve_anyway'])('does not write %s when approval consent is missing',async(name)=>{
   const s=setup();
   s.authorization.authorize.mockResolvedValueOnce(s.ctx).mockRejectedValueOnce(new Error('Reconecte o aplicativo e autorize a conclusão de tarefas (tasks:approve).'));
-  await expect(s.call('approve_review',{taskId:'task',operationId:'op',expectedVersion:2,cycle:1})).rejects.toThrow(/Reconecte.*tasks:approve/);
+  await expect(s.call(name,{taskId:'task',operationId:'op',expectedVersion:2,cycle:1})).rejects.toThrow(/Reconecte.*tasks:approve/);
   expect(s.workflow.execute).not.toHaveBeenCalled();
  });
 
- it('routes autonomous approval with only delegated approval capability', async()=>{
+ it.each(['approve_review','approve_anyway'])('routes %s with only delegated approval capability', async(name)=>{
   const s=setup(); s.ctx.session.permissions.add(PERMISSIONS.tarefas_aprovar);
-  await s.call('approve_review',{taskId:'task',operationId:'approve',expectedVersion:2,cycle:1});
-  expect(s.authorization.authorize).toHaveBeenLastCalledWith('opaque','approve_review','canonical-project');
-  expect(s.workflow.execute).toHaveBeenCalledWith(expect.objectContaining({channel:'MCP',canApprove:true,canReopen:false}),'task',expect.objectContaining({command:{type:'approve_review',cycle:1}}));
+  await s.call(name,{taskId:'task',operationId:'approve',expectedVersion:2,cycle:1});
+  expect(s.authorization.authorize).toHaveBeenLastCalledWith('opaque',name,'canonical-project');
+  expect(s.workflow.execute).toHaveBeenCalledWith(expect.objectContaining({channel:'MCP',canApprove:true,canReopen:false}),'task',expect.objectContaining({command:{type:name,cycle:1}}));
  });
  it.each([
   ['request_changes',{cycle:1,reason:'Typecheck failed'},{type:'request_changes',cycle:1,reason:'Typecheck failed'}],
@@ -121,3 +121,7 @@ describe('Corex MCP authorized tool adapters',()=>{
  it('feature-disabled tools do not advertise workflow mutations',()=>{const s=setup(false);expect(s.tools.some(t=>!t.readOnly)).toBe(false);});
  it('creates through atomic managed facade with verified project',async()=>{const s=setup();await s.call('create_task',{operationId:'op',externalReference:'plan/item',clientId:'project',projectId:'engagement',title:'Implement',responsibleId:'user',criteria:['works'],context:'scope'});expect(s.authorization.authorize).toHaveBeenLastCalledWith('opaque','create_task','project');expect(s.workflow.createManagedTask).toHaveBeenCalledWith(expect.objectContaining({channel:'MCP',connectionId:'trusted-grant'}),expect.objectContaining({operationId:'op',externalReference:'plan/item',projectId:'project',engagementId:'engagement',title:'Implement'}));});
 });
+
+it('offers explicit override on HUMAN and legacy review without hiding blockers',async()=>{for(const reviewMode of ['HUMAN',undefined]){const s=setup();s.ctx.session.permissions.add(PERMISSIONS.tarefas_aprovar);s.ctx.scopes.add('tasks:approve');s.workflow.load.mockResolvedValue({taskId:'task',version:3,stage:'IN_REVIEW',deliveryRevision:1,reviews:[{decision:'pending',deliveryRevision:1,reviewMode,checks:[{name:'lint',status:'failed',required:true}]}],findings:[]});expect(await s.call('get_task',{taskId:'task'})).toMatchObject({approvalOverrideAvailable:true,approvalOverrideTool:'approve_anyway',completionBlockers:expect.arrayContaining([{kind:'CHECK',id:'lint',status:'failed'}])});}});
+
+it('does not advertise approval override without current delegated approval',async()=>{const s=setup();s.workflow.load.mockResolvedValue({taskId:'task',version:3,stage:'IN_REVIEW',deliveryRevision:1,reviews:[{decision:'pending',deliveryRevision:1,reviewMode:'HUMAN',checks:[]}],findings:[]});expect(await s.call('get_task',{taskId:'task'})).toMatchObject({approvalOverrideAvailable:false,approvalOverrideTool:null});s.ctx.session.permissions.add(PERMISSIONS.tarefas_aprovar);expect(await s.call('get_task',{taskId:'task'})).toMatchObject({approvalOverrideAvailable:false});});
