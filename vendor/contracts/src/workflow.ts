@@ -132,6 +132,20 @@ export interface WorkflowResult {
   event: WorkflowEvent;
 }
 
+/** Item do feed da equipe (`GET /tasks/workflows/team`): execução viva visível ao usuário. [produto-telas RB1] */
+export interface WorkflowTeamItem {
+  taskId: string;
+  title: string;
+  clientId: string;
+  clientName: string;
+  projectId: string;
+  projectName: string;
+  responsibleName: string | null;
+  assigneeName: string | null;
+  updatedAt: string;
+  state: WorkflowState;
+}
+
 
 import { z } from "zod";
 

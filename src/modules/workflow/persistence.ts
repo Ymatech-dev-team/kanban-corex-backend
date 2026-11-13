@@ -1,3 +1,4 @@
+import type { WorkflowTeamItem } from "@sistema-tasks/contracts";
 import type { WorkflowActor, WorkflowState } from "./types.js";
 import type { ExecuteWorkflowInput, InitializeWorkflowInput } from "./schemas.js";
 
@@ -16,6 +17,8 @@ export interface BoardMoveActor extends WorkflowActor { canMove: boolean }
 export interface WorkflowStore {
   moveBoard?(actor: BoardMoveActor, taskId: string, input: BoardMoveInput): Promise<WorkflowState | null>;
   listMonitoring?(orgId: string, userId: string, before?: MonitoringCursor, limit?: number): Promise<WorkflowMonitoringItem[]>;
+  /** Feed da equipe [produto-telas RB1]: execuções vivas visíveis ao usuário (tenant + visibilidade de projeto), sem o filtro "é meu". */
+  listTeamMonitoring?(orgId: string, userId: string, now: Date, before?: MonitoringCursor, limit?: number): Promise<WorkflowTeamItem[]>;
   load(orgId: string, taskId: string): Promise<WorkflowState | null>;
   events(orgId: string, taskId: string, beforeVersion?: number, limit?: number): Promise<unknown[]>;
   actions(orgId: string, taskId: string): Promise<WorkflowAction[]>;
