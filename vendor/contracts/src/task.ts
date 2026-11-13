@@ -58,6 +58,7 @@ export const listAllTasksFiltersSchema = taskFiltersSchema
       .optional()
       .transform((v) => v === true || v === "true"),
     limit: z.coerce.number().int().min(1).max(500).optional(),
+    q: z.string().trim().min(1).max(100).optional(), // busca por título, sem diferenciar maiúsculas [produto-telas RB4]
   })
   .superRefine((v, ctx) => {
     if (v.dueFrom && v.dueTo && new Date(v.dueFrom) > new Date(v.dueTo)) {

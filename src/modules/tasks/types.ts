@@ -57,6 +57,7 @@ export interface TaskFilterOpts {
   dueFrom?: string; // ISO — prazo >=
   dueTo?: string; // ISO — prazo <=
   includeDone?: boolean; // false (default) oculta DONE quando não há status explícito
+  q?: string; // busca por título, sem diferenciar maiúsculas (só listAll) [produto-telas RB4]
 }
 
 /** Resultado da listagem global: tarefas + sinal de truncamento. [tarefas-visao-global RF-A7] */
